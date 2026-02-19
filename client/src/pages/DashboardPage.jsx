@@ -1,17 +1,18 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { motion } from 'framer-motion';
-import { 
-  MapPin, Navigation, Camera, BarChart3, Shield, 
+import { motion, AnimatePresence } from 'framer-motion';
+import {
+  MapPin, Navigation, Camera, BarChart3, Shield,
   AlertTriangle, Activity, Users, Zap, Settings,
-  LogOut, Clock, ChevronRight
+  LogOut, Clock, ChevronRight, Search
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { useSocket } from '../context/SocketContext';
 import api from '../utils/api';
-import { geocodeAddress, getOSRMRoute, getStreetLights, getTrafficSignals, getShops, calculateBoundingBox, calculateRouteSafetyMetrics } from '../services/openStreetMap';
+import { geocodeAddress, searchPlaces, getOSRMRoute, calculateBoundingBox, calculateRouteSafetyMetrics } from "../services/openStreetMap.js"
 import SafetyScoreBar from '../components/SafetyScoreBar';
 import ReportModal from '../components/ReportModal';
+import mockRoutes from '../utils/data';
 
 const DashboardPage = () => {
   const navigate = useNavigate();
@@ -24,6 +25,72 @@ const DashboardPage = () => {
     origin: '',
     destination: ''
   });
+
+  // Autocomplete state
+  const [originSuggestions, setOriginSuggestions] = useState([]);
+  const [destinationSuggestions, setDestinationSuggestions] = useState([]);
+  const [originCoords, setOriginCoords] = useState(null);
+  const [destCoords, setDestCoords] = useState(null);
+  const originDebounceRef = useRef(null);
+  const destDebounceRef = useRef(null);
+  const originWrapperRef = useRef(null);
+  const destWrapperRef = useRef(null);
+
+  // Close dropdowns on outside click
+  useEffect(() => {
+    const handleClickOutside = (e) => {
+      if (originWrapperRef.current && !originWrapperRef.current.contains(e.target)) {
+        setOriginSuggestions([]);
+      }
+      if (destWrapperRef.current && !destWrapperRef.current.contains(e.target)) {
+        setDestinationSuggestions([]);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+
+  const handleOriginChange = useCallback((e) => {
+    const value = e.target.value;
+    setRouteData(prev => ({ ...prev, origin: value }));
+    setOriginCoords(null);
+    clearTimeout(originDebounceRef.current);
+    if (value.length >= 3) {
+      originDebounceRef.current = setTimeout(async () => {
+        const results = await searchPlaces(value);
+        setOriginSuggestions(results.slice(0, 5));
+      }, 300);
+    } else {
+      setOriginSuggestions([]);
+    }
+  }, []);
+
+  const handleDestChange = useCallback((e) => {
+    const value = e.target.value;
+    setRouteData(prev => ({ ...prev, destination: value }));
+    setDestCoords(null);
+    clearTimeout(destDebounceRef.current);
+    if (value.length >= 3) {
+      destDebounceRef.current = setTimeout(async () => {
+        const results = await searchPlaces(value);
+        setDestinationSuggestions(results.slice(0, 5));
+      }, 300);
+    } else {
+      setDestinationSuggestions([]);
+    }
+  }, []);
+
+  const selectOriginSuggestion = useCallback((place) => {
+    setRouteData(prev => ({ ...prev, origin: place.display_name }));
+    setOriginCoords({ lat: parseFloat(place.lat), lng: parseFloat(place.lon) });
+    setOriginSuggestions([]);
+  }, []);
+
+  const selectDestSuggestion = useCallback((place) => {
+    setRouteData(prev => ({ ...prev, destination: place.display_name }));
+    setDestCoords({ lat: parseFloat(place.lat), lng: parseFloat(place.lon) });
+    setDestinationSuggestions([]);
+  }, []);
 
   useEffect(() => {
     fetchStats();
@@ -38,148 +105,179 @@ const DashboardPage = () => {
     }
   };
 
-  const handleFindRoutes = async (e) => {
-    e.preventDefault();
-    if (!routeData.origin || !routeData.destination) {
-      alert('Please enter both origin and destination');
-      return;
-    }
-    
-    setLoading(true);
-    try {
-      // Step 1: Geocode addresses to coordinates using OpenStreetMap/Nominatim
-      console.log('Geocoding addresses...');
-      const [originData, destinationData] = await Promise.all([
-        geocodeAddress(routeData.origin),
-        geocodeAddress(routeData.destination)
-      ]);
+ const normalizeLocation = (text) => {
+  return text
+    .toLowerCase()
+    .replace(/[^a-z\s]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+};
 
-      console.log('Origin:', originData);
-      console.log('Destination:', destinationData);
+const handleFindRoutes = async (e) => {
+  e.preventDefault();
 
-      // Step 2: Get routes from OSRM
-      console.log('Calculating routes with OSRM...');
-      const coordinates = [
-        [originData.lng, originData.lat],
-        [destinationData.lng, destinationData.lat]
-      ];
-      
-      const osrmRoutes = await getOSRMRoute(coordinates);
-      console.log('OSRM routes:', osrmRoutes);
+  if (!routeData.origin || !routeData.destination) {
+    alert("Please enter both origin and destination");
+    return;
+  }
 
-      // Step 3: Fetch safety data (street lights, traffic signals, shops) using Overpass API
-      console.log('Fetching safety data from Overpass API...');
-      const allRouteCoords = osrmRoutes.flatMap(route => route.path);
-      const bbox = calculateBoundingBox(allRouteCoords, 0.02);
-      
-      const [streetLights, trafficSignals, shops] = await Promise.all([
-        getStreetLights(bbox),
-        getTrafficSignals(bbox),
-        getShops(bbox)
-      ]);
+  const normalizedOrigin = normalizeLocation(routeData.origin);
+  const normalizedDest = normalizeLocation(routeData.destination);
 
-      console.log(`Found ${streetLights.length} street lights`);
-      console.log(`Found ${trafficSignals.length} traffic signals`);
-      console.log(`Found ${shops.length} shops`);
+  const mockMatch = Object.keys(mockRoutes).find(key => {
+    const [mockOrigin, mockDest] = key.split("-");
+    return (
+      normalizedOrigin.includes(mockOrigin) &&
+      normalizedDest.includes(mockDest)
+    );
+  });
 
-      // Step 4: Calculate safety scores for each route
-      const enhancedRoutes = osrmRoutes.map((route, index) => {
-        const safetyMetrics = calculateRouteSafetyMetrics(
-          route.path,
+  // =========================
+  // ✅ MOCK ROUTE FOUND
+  // =========================
+  if (mockMatch) {
+    console.log("Using MOCK route");
+
+    const mockData = mockRoutes[mockMatch];
+
+    const enhancedRoutes = mockData.map((route, index) => {
+      let badge = "RISKY";
+      if (index === 0) badge = "SAFEST";
+      else if (index === 1) badge = "MODERATE";
+
+      return {
+        routeId: `route-${String.fromCharCode(97 + index)}`,
+        label: `Route ${String.fromCharCode(65 + index)}`,
+        badge,
+        color:
+          badge === "SAFEST"
+            ? "#10b981"
+            : badge === "MODERATE"
+              ? "#f59e0b"
+              : "#ef4444",
+        estimatedTime: `${route.duration} mins`,
+        estimatedMinutes: route.duration,
+        distance: route.distance,
+        safetyScore: route.safetyScore,
+        lightingScore: route.streetLights * 15,
+        crowdScore: route.trafficSignals * 20,
+        openShops: route.shops,
+        streetLightsCount: route.streetLights,
+        trafficSignalsCount: route.trafficSignals,
+        shopsCount: route.shops,
+        path: [],
+        geometry: null,
+        aiNarrative: `At 1:30 AM, this route has ${route.streetLights} street lights and ${route.shops} active shop areas.`,
+        recommended: badge === "SAFEST"
+      };
+    });
+
+    navigate("/map", {
+      state: {
+        routes: enhancedRoutes,
+        origin: { name: routeData.origin },
+        destination: { name: routeData.destination },
+        safetyData: {
+          streetLights: [],
+          trafficSignals: [],
+          shops: []
+        }
+      }
+    });
+
+    return;
+  }
+
+  // =========================
+  // 🌍 LIVE ROUTING (OSRM + OVERPASS)
+  // =========================
+  console.log("Using LIVE routing");
+
+  setLoading(true);
+
+  try {
+    const [originData, destinationData] = await Promise.all([
+      geocodeAddress(routeData.origin),
+      geocodeAddress(routeData.destination)
+    ]);
+
+    const coordinates = [
+      [originData.lng, originData.lat],
+      [destinationData.lng, destinationData.lat]
+    ];
+
+    const osrmRoutes = await getOSRMRoute(coordinates);
+
+    const allRouteCoords = osrmRoutes.flatMap(route => route.path);
+    const bbox = calculateBoundingBox(allRouteCoords, 0.005);
+
+    const safetyResponse = await api.get("/api/overpass", {
+      params: { bbox: bbox.join(",") }
+    });
+
+    const { streetLights, trafficSignals, shops } = safetyResponse.data;
+
+    const enhancedRoutes = osrmRoutes.map((route, index) => {
+      const safetyMetrics = calculateRouteSafetyMetrics(
+        route.path,
+        streetLights,
+        trafficSignals,
+        shops
+      );
+
+      const safetyScore = Math.round(
+        (safetyMetrics.lightingScore * 0.4) +
+        (safetyMetrics.crowdScore * 0.3) +
+        (safetyMetrics.openShops * 0.3)
+      );
+
+      return {
+        routeId: `route-${String.fromCharCode(97 + index)}`,
+        label: `Route ${String.fromCharCode(65 + index)}`,
+        badge: index === 0 ? "SAFEST" : index === 1 ? "MODERATE" : "RISKY",
+        color:
+          index === 0
+            ? "#10b981"
+            : index === 1
+              ? "#f59e0b"
+              : "#ef4444",
+        estimatedTime: `${Math.round(route.duration / 60)} mins`,
+        estimatedMinutes: Math.round(route.duration / 60),
+        distance: route.distance,
+        safetyScore,
+        lightingScore: safetyMetrics.lightingScore,
+        crowdScore: safetyMetrics.crowdScore,
+        openShops: safetyMetrics.openShops,
+        streetLightsCount: safetyMetrics.streetLightsCount,
+        trafficSignalsCount: safetyMetrics.trafficSignalsCount,
+        shopsCount: safetyMetrics.shopsCount,
+        path: route.path,
+        geometry: route.geometry,
+        recommended: index === 0
+      };
+    });
+
+    navigate("/map", {
+      state: {
+        routes: enhancedRoutes,
+        origin: originData,
+        destination: destinationData,
+        safetyData: {
           streetLights,
           trafficSignals,
           shops
-        );
-
-        // Calculate overall safety score
-        const safetyScore = Math.round(
-          (safetyMetrics.lightingScore * 0.4) + 
-          (safetyMetrics.crowdScore * 0.3) + 
-          (safetyMetrics.openShops * 0.3)
-        );
-
-        // Determine route label and badge
-        let label, badge, color;
-        if (index === 0) {
-          label = 'Route A - Safest';
-          badge = 'SAFEST';
-          color = '#10b981';
-        } else if (index === 1) {
-          label = 'Route B - Moderate';
-          badge = 'MODERATE';
-          color = '#f59e0b';
-        } else {
-          label = 'Route C - Fastest';
-          badge = 'RISKY';
-          color = '#ef4444';
         }
+      }
+    });
 
-        // Convert duration from seconds to minutes
-        const durationMinutes = Math.round(route.duration / 60);
+  } catch (error) {
+    console.error("Routing failed:", error);
+    alert("Failed to calculate routes.");
+  }
 
-        return {
-          routeId: `route-${String.fromCharCode(97 + index)}`,
-          label,
-          badge,
-          color,
-          estimatedTime: `${durationMinutes} mins`,
-          estimatedMinutes: durationMinutes,
-          distance: route.distance,
-          safetyScore,
-          lightingScore: safetyMetrics.lightingScore,
-          crowdScore: safetyMetrics.crowdScore,
-          openShops: safetyMetrics.openShops,
-          streetLightsCount: safetyMetrics.streetLightsCount,
-          trafficSignalsCount: safetyMetrics.trafficSignalsCount,
-          shopsCount: safetyMetrics.shopsCount,
-          path: route.path,
-          geometry: route.geometry,
-          aiNarrative: `This route has ${safetyMetrics.streetLightsCount} street lights and ${safetyMetrics.shopsCount} nearby shops. Lighting coverage is ${safetyMetrics.lightingScore > 70 ? 'excellent' : safetyMetrics.lightingScore > 50 ? 'moderate' : 'limited'}.`,
-          riskFactors: safetyMetrics.lightingScore < 50 ? ['Limited street lighting', 'Poor visibility'] : 
-                      safetyMetrics.lightingScore < 70 ? ['Moderate lighting', 'Some dark areas'] : 
-                      ['Well-lit areas', 'Good visibility'],
-          recommended: index === 0
-        };
-      });
+  setLoading(false);
+};
 
-      // Sort by safety score
-      enhancedRoutes.sort((a, b) => b.safetyScore - a.safetyScore);
-      
-      // Update badges after sorting
-      enhancedRoutes[0].badge = 'SAFEST';
-      enhancedRoutes[0].recommended = true;
-      if (enhancedRoutes[1]) enhancedRoutes[1].badge = 'MODERATE';
-      if (enhancedRoutes[2]) enhancedRoutes[2].badge = 'RISKY';
-
-      console.log('Enhanced routes with safety data:', enhancedRoutes);
-
-      // Navigate to map with route data
-      navigate('/map', { 
-        state: { 
-          routes: enhancedRoutes,
-          origin: { 
-            lat: originData.lat, 
-            lng: originData.lng, 
-            name: originData.displayName 
-          },
-          destination: { 
-            lat: destinationData.lat, 
-            lng: destinationData.lng, 
-            name: destinationData.displayName 
-          },
-          safetyData: {
-            streetLights,
-            trafficSignals,
-            shops
-          }
-        } 
-      });
-    } catch (error) {
-      console.error('Route calculation failed:', error);
-      alert('Failed to calculate routes: ' + (error.message || 'Unknown error'));
-    }
-    setLoading(false);
-  };
 
   const getGreeting = () => {
     const hour = new Date().getHours();
@@ -253,38 +351,112 @@ const DashboardPage = () => {
               </div>
 
               <form onSubmit={handleFindRoutes} className="space-y-4">
+                {/* ── Origin input with autocomplete ── */}
                 <div className="space-y-2">
                   <label className="flex items-center gap-2 text-sm text-cyber-light">
                     <MapPin className="w-4 h-4 text-cyber-cyan" />
                     Pickup Location
                   </label>
-                  <input
-                    type="text"
-                    value={routeData.origin}
-                    onChange={(e) => setRouteData({ ...routeData, origin: e.target.value })}
-                    placeholder="Enter starting location (e.g., Times Square, NYC)"
-                    className="input-cyber w-full"
-                    required
-                  />
+                  <div className="relative" ref={originWrapperRef}>
+                    <input
+                      type="text"
+                      id="origin-input"
+                      value={routeData.origin}
+                      onChange={handleOriginChange}
+                      placeholder="Enter starting location (e.g., Times Square, NYC)"
+                      className="input-cyber w-full pr-10"
+                      autoComplete="off"
+                      required
+                    />
+                    <Search className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-cyber-cyan/40 pointer-events-none" />
+                    <AnimatePresence>
+                      {originSuggestions.length > 0 && (
+                        <motion.ul
+                          id="origin-suggestions"
+                          initial={{ opacity: 0, y: -6 }}
+                          animate={{ opacity: 1, y: 0 }}
+                          exit={{ opacity: 0, y: -6 }}
+                          transition={{ duration: 0.15 }}
+                          className="absolute z-50 w-full mt-1 rounded-xl overflow-hidden"
+                          style={{
+                            background: 'rgba(18,18,26,0.97)',
+                            border: '1px solid rgba(0,245,255,0.25)',
+                            boxShadow: '0 8px 32px rgba(0,245,255,0.12)'
+                          }}
+                        >
+                          {originSuggestions.map((place, idx) => (
+                            <li
+                              key={place.place_id ?? idx}
+                              onMouseDown={() => selectOriginSuggestion(place)}
+                              className="flex items-start gap-3 px-4 py-3 cursor-pointer transition-all duration-150"
+                              style={{ borderBottom: idx < originSuggestions.length - 1 ? '1px solid rgba(255,255,255,0.06)' : 'none' }}
+                              onMouseEnter={e => e.currentTarget.style.background = 'rgba(0,245,255,0.08)'}
+                              onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
+                            >
+                              <MapPin className="w-4 h-4 mt-0.5 shrink-0 text-cyber-cyan" />
+                              <span className="text-sm text-white/90 leading-snug line-clamp-2">{place.display_name}</span>
+                            </li>
+                          ))}
+                        </motion.ul>
+                      )}
+                    </AnimatePresence>
+                  </div>
                 </div>
 
                 <div className="flex justify-center">
                   <div className="w-px h-8 bg-gradient-to-b from-cyber-cyan/50 to-cyber-purple/50" />
                 </div>
 
+                {/* ── Destination input with autocomplete ── */}
                 <div className="space-y-2">
                   <label className="flex items-center gap-2 text-sm text-cyber-light">
                     <MapPin className="w-4 h-4 text-cyber-purple" />
                     Destination
                   </label>
-                  <input
-                    type="text"
-                    value={routeData.destination}
-                    onChange={(e) => setRouteData({ ...routeData, destination: e.target.value })}
-                    placeholder="Enter destination (e.g., Central Park, NYC)"
-                    className="input-cyber w-full"
-                    required
-                  />
+                  <div className="relative" ref={destWrapperRef}>
+                    <input
+                      type="text"
+                      id="destination-input"
+                      value={routeData.destination}
+                      onChange={handleDestChange}
+                      placeholder="Enter destination (e.g., Central Park, NYC)"
+                      className="input-cyber w-full pr-10"
+                      autoComplete="off"
+                      required
+                    />
+                    <Search className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-cyber-purple/40 pointer-events-none" />
+                    <AnimatePresence>
+                      {destinationSuggestions.length > 0 && (
+                        <motion.ul
+                          id="destination-suggestions"
+                          initial={{ opacity: 0, y: -6 }}
+                          animate={{ opacity: 1, y: 0 }}
+                          exit={{ opacity: 0, y: -6 }}
+                          transition={{ duration: 0.15 }}
+                          className="absolute z-50 w-full mt-1 rounded-xl overflow-hidden"
+                          style={{
+                            background: 'rgba(18,18,26,0.97)',
+                            border: '1px solid rgba(124,58,237,0.3)',
+                            boxShadow: '0 8px 32px rgba(124,58,237,0.12)'
+                          }}
+                        >
+                          {destinationSuggestions.map((place, idx) => (
+                            <li
+                              key={place.place_id ?? idx}
+                              onMouseDown={() => selectDestSuggestion(place)}
+                              className="flex items-start gap-3 px-4 py-3 cursor-pointer transition-all duration-150"
+                              style={{ borderBottom: idx < destinationSuggestions.length - 1 ? '1px solid rgba(255,255,255,0.06)' : 'none' }}
+                              onMouseEnter={e => e.currentTarget.style.background = 'rgba(124,58,237,0.1)'}
+                              onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
+                            >
+                              <MapPin className="w-4 h-4 mt-0.5 shrink-0 text-cyber-purple" />
+                              <span className="text-sm text-white/90 leading-snug line-clamp-2">{place.display_name}</span>
+                            </li>
+                          ))}
+                        </motion.ul>
+                      )}
+                    </AnimatePresence>
+                  </div>
                 </div>
 
                 <motion.button

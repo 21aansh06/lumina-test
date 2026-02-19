@@ -1,201 +1,318 @@
-// OpenStreetMap and Overpass API Service
-import axios from 'axios';
+import axios from "axios";
 
-const OVERPASS_API_URL = 'https://overpass-api.de/api/interpreter';
-const NOMINATIM_API_URL = 'https://nominatim.openstreetmap.org';
-const OSRM_API_URL = 'https://router.project-osrm.org';
+const OSRM_API_URL = "https://router.project-osrm.org";
+const OVERPASS_API_URL = "https://overpass-api.de/api/interpreter";
+const API_BASE_URL = import.meta.env.VITE_API_URL
+  ? `${import.meta.env.VITE_API_URL}/api`
+  : "http://localhost:5000/api";
 
-/**
- * Geocode address to coordinates using Nominatim
- * @param {string} address - Address to geocode
- * @returns {Promise<{lat: number, lng: number}>}
- */
+const EARTH_RADIUS_M = 6371000;
+
+let pendingOverpassController = null;
+
 export const geocodeAddress = async (address) => {
   try {
-    const response = await axios.get(`${NOMINATIM_API_URL}/search`, {
-      params: {
-        q: address,
-        format: 'json',
-        limit: 1
-      },
-      headers: {
-        'User-Agent': 'LUMINA-Safety-App/1.0'
-      }
+    const response = await axios.get(`${API_BASE_URL}/geocode`, {
+      params: { q: address }
     });
 
-    if (response.data && response.data.length > 0) {
+    const data = response.data;
+
+    if (Array.isArray(data) && data.length > 0) {
       return {
-        lat: parseFloat(response.data[0].lat),
-        lng: parseFloat(response.data[0].lon),
-        displayName: response.data[0].display_name
+        lat: parseFloat(data[0].lat),
+        lng: parseFloat(data[0].lon),
+        displayName: data[0].display_name
       };
     }
-    throw new Error('Address not found');
+
+    throw new Error("Address not found");
   } catch (error) {
-    console.error('Geocoding error:', error);
+    console.error("Geocoding error:", error.message);
     throw error;
   }
 };
 
-/**
- * Get routes using OSRM
- * @param {Array} coordinates - Array of [lng, lat] coordinates
- * @returns {Promise<Object>} Route data with geometry
- */
-export const getOSRMRoute = async (coordinates) => {
+export const searchPlaces = async (query) => {
   try {
-    const coordsString = coordinates.map(coord => coord.join(',')).join(';');
-    const response = await axios.get(`${OSRM_API_URL}/route/v1/driving/${coordsString}`, {
-      params: {
-        overview: 'full',
-        geometries: 'geojson',
-        steps: true,
-        alternatives: true
-      }
+    const response = await axios.get(`${API_BASE_URL}/search`, {
+      params: { q: query }
     });
 
-    if (response.data.code !== 'Ok') {
-      throw new Error('Route calculation failed');
+    return response.data || [];
+  } catch (error) {
+    console.error("Place search error:", error.message);
+    return [];
+  }
+};
+
+export const getOSRMRoute = async (coordinates) => {
+  try {
+    const coordsString = coordinates.map((c) => c.join(",")).join(";");
+
+    const response = await axios.get(
+      `${OSRM_API_URL}/route/v1/driving/${coordsString}`,
+      {
+        params: {
+          overview: "full",
+          geometries: "geojson",
+          steps: true,
+          alternatives: true
+        },
+        timeout: 15000
+      }
+    );
+
+    if (response.data.code !== "Ok") {
+      throw new Error("Route calculation failed");
     }
 
-    return response.data.routes.map((route, index) => ({
+    return response.data.routes.slice(0, 3).map((route, index) => ({
       routeId: `route-${String.fromCharCode(97 + index)}`,
       distance: route.distance,
       duration: route.duration,
       geometry: route.geometry,
       legs: route.legs,
-      path: route.geometry.coordinates.map(coord => [coord[1], coord[0]]) // Convert to [lat, lng]
+      path: route.geometry.coordinates.map((c) => [c[1], c[0]])
     }));
   } catch (error) {
-    console.error('OSRM routing error:', error);
+    console.error("OSRM routing error:", error.message);
     throw error;
   }
 };
 
-/**
- * Query street lights along a route using Overpass API
- * @param {Array} bbox - Bounding box [minLng, minLat, maxLng, maxLat]
- * @returns {Promise<Array>} Array of street light locations
- */
-export const getStreetLights = async (bbox) => {
-  const [minLng, minLat, maxLng, maxLat] = bbox;
-  
-  const query = `
-    [out:json][timeout:25];
-    (
-      node["highway"="street_lamp"](${minLat},${minLng},${maxLat},${maxLng});
-      way["highway"="street_lamp"](${minLat},${minLng},${maxLat},${maxLng});
-    );
-    out body;
-    >;
-    out skel qt;
-  `;
+const toRad = (deg) => (deg * Math.PI) / 180;
+const toDeg = (rad) => (rad * 180) / Math.PI;
 
-  try {
-    const response = await axios.post(OVERPASS_API_URL, query, {
-      headers: {
-        'Content-Type': 'application/x-www-form-urlencoded'
+const haversineDistanceM = (lat1, lng1, lat2, lng2) => {
+  const φ1 = toRad(lat1);
+  const φ2 = toRad(lat2);
+  const Δφ = toRad(lat2 - lat1);
+  const Δλ = toRad(lng2 - lng1);
+
+  const a =
+    Math.sin(Δφ / 2) ** 2 +
+    Math.cos(φ1) * Math.cos(φ2) * Math.sin(Δλ / 2) ** 2;
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+
+  return EARTH_RADIUS_M * c;
+};
+
+const calculateBearing = (lat1, lng1, lat2, lng2) => {
+  const φ1 = toRad(lat1);
+  const φ2 = toRad(lat2);
+  const Δλ = toRad(lng2 - lng1);
+
+  const y = Math.sin(Δλ) * Math.cos(φ2);
+  const x =
+    Math.cos(φ1) * Math.sin(φ2) -
+    Math.sin(φ1) * Math.cos(φ2) * Math.cos(Δλ);
+
+  return Math.atan2(y, x);
+};
+
+const crossTrackDistanceM = (lat1, lng1, lat2, lng2, lat3, lng3) => {
+  const d13 = haversineDistanceM(lat1, lng1, lat3, lng3) / EARTH_RADIUS_M;
+  const θ13 = calculateBearing(lat1, lng1, lat3, lng3);
+  const θ12 = calculateBearing(lat1, lng1, lat2, lng2);
+
+  const dxt = Math.asin(Math.sin(d13) * Math.sin(θ13 - θ12)) * EARTH_RADIUS_M;
+
+  return Math.abs(dxt);
+};
+
+const alongTrackDistanceM = (lat1, lng1, lat2, lng2, lat3, lng3) => {
+  const d13 = haversineDistanceM(lat1, lng1, lat3, lng3) / EARTH_RADIUS_M;
+  const θ13 = calculateBearing(lat1, lng1, lat3, lng3);
+  const θ12 = calculateBearing(lat1, lng1, lat2, lng2);
+
+  const dxt = Math.asin(Math.sin(d13) * Math.sin(θ13 - θ12));
+
+  const dat = Math.acos(Math.cos(d13) / Math.cos(dxt)) * EARTH_RADIUS_M;
+
+  return dat;
+};
+
+const distanceToSegmentM = (pLat, pLng, lat1, lng1, lat2, lng2) => {
+  const d12 = haversineDistanceM(lat1, lng1, lat2, lng2);
+
+  if (d12 < 1) {
+    return haversineDistanceM(lat1, lng1, pLat, pLng);
+  }
+
+  const dat = alongTrackDistanceM(lat1, lng1, lat2, lng2, pLat, pLng);
+
+  if (dat < 0) {
+    return haversineDistanceM(lat1, lng1, pLat, pLng);
+  }
+
+  if (dat > d12) {
+    return haversineDistanceM(lat2, lng2, pLat, pLng);
+  }
+
+  return crossTrackDistanceM(lat1, lng1, lat2, lng2, pLat, pLng);
+};
+
+const distanceToRouteM = (pLat, pLng, routePath) => {
+  let minDist = Infinity;
+
+  for (let i = 0; i < routePath.length - 1; i++) {
+    const [lat1, lng1] = routePath[i];
+    const [lat2, lng2] = routePath[i + 1];
+
+    const dist = distanceToSegmentM(pLat, pLng, lat1, lng1, lat2, lng2);
+
+    if (dist < minDist) minDist = dist;
+  }
+
+  return minDist;
+};
+
+const buildPolylineString = (routePath, sampleInterval = 3) => {
+  const sampled = [];
+  for (let i = 0; i < routePath.length; i += sampleInterval) {
+    sampled.push(routePath[i]);
+  }
+  if (sampled.length === 0) {
+    return routePath.map(([lat, lng]) => `${lat.toFixed(6)},${lng.toFixed(6)}`).join(" ");
+  }
+  const lastPoint = routePath[routePath.length - 1];
+  const lastSampled = sampled[sampled.length - 1];
+  if (lastSampled[0] !== lastPoint[0] || lastSampled[1] !== lastPoint[1]) {
+    sampled.push(lastPoint);
+  }
+  return sampled.map(([lat, lng]) => `${lat.toFixed(6)},${lng.toFixed(6)}`).join(" ");
+};
+
+const fetchOverpassData = async (routePath, searchRadius, signal) => {
+  // Format as "lat,lng lat,lng ..." for the backend
+  const polylineStr = routePath
+    .map(([lat, lng]) => `${lat.toFixed(6)},${lng.toFixed(6)}`)
+    .join(" ");
+
+  console.log(`[SafetyData] Fetching from backend with radius ${searchRadius}m`);
+
+  const response = await axios.get(`${API_BASE_URL}/overpass`, {
+    params: {
+      polyline: polylineStr,
+      radius: searchRadius
+    },
+    signal,
+    timeout: 30000
+  });
+
+  // The backend already returns { streetLights, trafficSignals, shops }
+  const { streetLights, trafficSignals, shops } = response.data;
+  const elements = [
+    ...streetLights.map(l => ({ ...l, tags: { ...l.tags, highway: 'street_lamp' } })),
+    ...trafficSignals.map(s => ({ ...s, tags: { ...s.tags, highway: 'traffic_signals' } })),
+    ...shops.map(s => ({ ...s, tags: { ...s.tags } }))
+  ];
+
+  return elements;
+};
+
+export const getSafetyData = async (routePath, baseRadius = 150) => {
+  if (!routePath || routePath.length < 2) {
+    console.log('[SafetyData] No route path provided');
+    return { streetLights: [], trafficSignals: [], shops: [] };
+  }
+
+  if (pendingOverpassController) {
+    pendingOverpassController.abort();
+  }
+
+  const controller = new AbortController();
+  pendingOverpassController = controller;
+
+  let elements = [];
+  let attemptRadius = baseRadius;
+  let attempt = 0;
+  const maxAttempts = 2;
+
+  while (attempt < maxAttempts) {
+    attempt++;
+
+    try {
+      elements = await fetchOverpassData(routePath, attemptRadius, controller.signal);
+
+      if (elements.length > 0 || attempt >= maxAttempts) {
+        break;
       }
-    });
 
-    return response.data.elements.map(element => ({
-      id: element.id,
-      type: element.type,
-      lat: element.lat,
-      lng: element.lon,
-      tags: element.tags || {}
-    }));
-  } catch (error) {
-    console.error('Overpass API error:', error);
-    return []; // Return empty array on error
+      attemptRadius += 50;
+    } catch (error) {
+      if (error.name === "AbortError" || error.code === "ERR_CANCELED") {
+        return { streetLights: [], trafficSignals: [], shops: [] };
+      }
+
+      if (error.response?.status === 429 || error.response?.status === 504) {
+        if (attempt < maxAttempts) {
+          await new Promise(resolve => setTimeout(resolve, 2000));
+          attemptRadius += 50;
+          continue;
+        }
+      }
+
+      console.error("Overpass error:", error.message);
+      return { streetLights: [], trafficSignals: [], shops: [] };
+    }
+  }
+
+  pendingOverpassController = null;
+
+  const streetLights = [];
+  const trafficSignals = [];
+  const shops = [];
+  const seen = new Set();
+
+  const LIGHT_THRESHOLD = 10;
+  const SIGNAL_THRESHOLD = 30;
+  const SHOP_THRESHOLD = 75;
+
+  for (const el of elements) {
+    const lat = el.lat ?? el.center?.lat;
+    const lng = el.lon ?? el.center?.lon;
+
+    if (lat == null || lng == null) continue;
+
+    const key = `${lat.toFixed(5)},${lng.toFixed(5)}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+
+    const distance = distanceToRouteM(lat, lng, routePath);
+
+    if (el.tags?.highway === "street_lamp") {
+      if (distance <= LIGHT_THRESHOLD) {
+        streetLights.push({ lat, lng, distance });
+      }
+    } else if (el.tags?.highway === "traffic_signals") {
+      if (distance <= SIGNAL_THRESHOLD) {
+        trafficSignals.push({ lat, lng, distance });
+      }
+    } else if (el.tags?.shop) {
+      if (distance <= SHOP_THRESHOLD) {
+        shops.push({ lat, lng, distance, type: el.tags.shop });
+      }
+    }
+  }
+
+  console.log(`[SafetyData] Filtered: ${streetLights.length} lights (≤${LIGHT_THRESHOLD}m), ${trafficSignals.length} signals (≤${SIGNAL_THRESHOLD}m), ${shops.length} shops (≤${SHOP_THRESHOLD}m)`);
+
+  return { streetLights, trafficSignals, shops };
+};
+
+export const cancelPendingOverpassRequest = () => {
+  if (pendingOverpassController) {
+    pendingOverpassController.abort();
+    pendingOverpassController = null;
   }
 };
 
-/**
- * Query traffic signals along a route
- * @param {Array} bbox - Bounding box [minLng, minLat, maxLng, maxLat]
- * @returns {Promise<Array>} Array of traffic signal locations
- */
-export const getTrafficSignals = async (bbox) => {
-  const [minLng, minLat, maxLng, maxLat] = bbox;
-  
-  const query = `
-    [out:json][timeout:25];
-    (
-      node["highway"="traffic_signals"](${minLat},${minLng},${maxLat},${maxLng});
-    );
-    out body;
-  `;
-
-  try {
-    const response = await axios.post(OVERPASS_API_URL, query, {
-      headers: {
-        'Content-Type': 'application/x-www-form-urlencoded'
-      }
-    });
-
-    return response.data.elements.map(element => ({
-      id: element.id,
-      lat: element.lat,
-      lng: element.lon,
-      tags: element.tags || {}
-    }));
-  } catch (error) {
-    console.error('Overpass API error:', error);
-    return [];
-  }
-};
-
-/**
- * Query shops and commercial areas
- * @param {Array} bbox - Bounding box
- * @returns {Promise<Array>} Array of shop locations
- */
-export const getShops = async (bbox) => {
-  const [minLng, minLat, maxLng, maxLat] = bbox;
-  
-  const query = `
-    [out:json][timeout:25];
-    (
-      node["shop"](${minLat},${minLng},${maxLat},${maxLng});
-      way["shop"](${minLat},${minLng},${maxLat},${maxLng});
-      node["amenity"="restaurant"](${minLat},${minLng},${maxLat},${maxLng});
-      node["amenity"="cafe"](${minLat},${minLng},${maxLat},${maxLng});
-      node["amenity"="fast_food"](${minLat},${minLng},${maxLat},${maxLng});
-    );
-    out body center;
-  `;
-
-  try {
-    const response = await axios.post(OVERPASS_API_URL, query, {
-      headers: {
-        'Content-Type': 'application/x-www-form-urlencoded'
-      }
-    });
-
-    return response.data.elements.map(element => ({
-      id: element.id,
-      type: element.type,
-      lat: element.lat || (element.center && element.center.lat),
-      lng: element.lon || (element.center && element.center.lon),
-      tags: element.tags || {}
-    })).filter(shop => shop.lat && shop.lng);
-  } catch (error) {
-    console.error('Overpass API error:', error);
-    return [];
-  }
-};
-
-/**
- * Calculate bounding box from route coordinates
- * @param {Array} coordinates - Array of [lat, lng]
- * @param {number} padding - Padding in degrees (default 0.01)
- * @returns {Array} [minLng, minLat, maxLng, maxLat]
- */
 export const calculateBoundingBox = (coordinates, padding = 0.01) => {
-  const lats = coordinates.map(coord => coord[0]);
-  const lngs = coordinates.map(coord => coord[1]);
-  
+  const lats = coordinates.map((c) => c[0]);
+  const lngs = coordinates.map((c) => c[1]);
+
   return [
     Math.min(...lngs) - padding,
     Math.min(...lats) - padding,
@@ -204,100 +321,169 @@ export const calculateBoundingBox = (coordinates, padding = 0.01) => {
   ];
 };
 
-/**
- * Calculate safety metrics for a route
- * @param {Array} routePath - Array of [lat, lng]
- * @param {Array} streetLights - Array of street light locations
- * @param {Array} trafficSignals - Array of traffic signal locations
- * @param {Array} shops - Array of shop locations
- * @returns {Object} Safety metrics
- */
-export const calculateRouteSafetyMetrics = (routePath, streetLights, trafficSignals, shops) => {
-  if (!routePath || routePath.length === 0) {
-    return { lightingScore: 50, crowdScore: 50, openShops: 50 };
+const calculateRouteLengthKm = (routePath) => {
+  let total = 0;
+
+  for (let i = 0; i < routePath.length - 1; i++) {
+    const [lat1, lng1] = routePath[i];
+    const [lat2, lng2] = routePath[i + 1];
+    total += haversineDistanceM(lat1, lng1, lat2, lng2);
   }
 
-  // Calculate route length (approximate using Haversine formula)
-  const routeLength = calculateRouteLength(routePath);
-  
-  // Count street lights within 50m of route
-  const lightsNearRoute = streetLights.filter(light => 
-    isPointNearRoute(light.lat, light.lng, routePath, 0.05) // 50m in degrees (approx)
-  ).length;
-  
-  // Count traffic signals
-  const signalsNearRoute = trafficSignals.filter(signal => 
-    isPointNearRoute(signal.lat, signal.lng, routePath, 0.05)
-  ).length;
-  
-  // Count shops
-  const shopsNearRoute = shops.filter(shop => 
-    isPointNearRoute(shop.lat, shop.lng, routePath, 0.1) // 100m for shops
-  ).length;
+  return total / 1000;
+};
 
-  // Calculate scores (0-100)
-  const lightingScore = Math.min(100, (lightsNearRoute / (routeLength * 0.1)) * 100);
-  const crowdScore = Math.min(100, 50 + (signalsNearRoute * 10) + (shopsNearRoute * 2));
-  const openShopsScore = Math.min(100, shopsNearRoute * 5);
+// ── Time-aware helpers ─────────────────────────────────────────────────────────
+
+/**
+ * Returns a 0–1 multiplier representing typical pedestrian crowd density
+ * for a given hour of the day (24-hour clock).
+ * Based on real-world foot-traffic patterns:
+ *   Late night (0–5):  near-empty streets
+ *   Early morning (6–8): light commuters
+ *   Business hours (9–21): normal activity
+ *   Evening (21–23): winding down
+ */
+const getTimeOfDayFactor = (hour) => {
+  if (hour >= 0 && hour < 5) return 0.12;  // 12 AM–5 AM: Very quiet, but not absolute zero
+  if (hour >= 5 && hour < 7) return 0.25;  // 5–7 AM: Early commuters
+  if (hour >= 7 && hour < 9) return 0.60;  // 7–9 AM: Morning commute
+  if (hour >= 9 && hour < 21) return 1.00;  // 9 AM–9 PM: Peak activity
+  if (hour >= 21 && hour < 23) return 0.50;  // 9–11 PM: Tapering off
+  return 0.25;                                // 11 PM–midnight: Late night
+};
+
+/**
+ * Category tags that may stay open 24 hours or late night.
+ */
+const LATE_NIGHT_SHOP_TYPES = new Set([
+  'convenience', 'supermarket', 'pharmacy', 'chemist',
+  'fuel', 'gas_station', 'petrol', 'kiosk', 'bakery',
+  'atm', 'vending_machine', 'hospital', 'clinic'
+]);
+
+/**
+ * Best-effort check: is this OSM shop element likely open at `hour`?
+ * 1. Try to honour the opening_hours tag (simple 24/7 / "Mo-Su HH:MM-HH:MM" patterns).
+ * 2. Fall back to category heuristic.
+ * 3. If we can't tell, treat daytime as open and late-night (10 PM–7 AM) as closed.
+ */
+const isShopLikelyOpen = (tags, hour) => {
+  const oh = (tags?.opening_hours || '').trim().toLowerCase();
+
+  // Explicit 24-hours tag
+  if (oh === '24/7' || oh === 'mo-su 00:00-24:00') return true;
+
+  // Simple single-range pattern: "HH:MM-HH:MM"
+  const rangeMatch = oh.match(/(\d{1,2}):(\d{2})-(\d{1,2}):(\d{2})/);
+  if (rangeMatch) {
+    const openH = parseInt(rangeMatch[1], 10);
+    const closeH = parseInt(rangeMatch[3], 10);
+    if (closeH > openH) return hour >= openH && hour < closeH;
+    // Overnight range e.g. 22:00-06:00
+    if (closeH < openH) return hour >= openH || hour < closeH;
+  }
+
+  // Category heuristic for shops with no opening_hours data
+  const shopType = (tags?.shop || tags?.amenity || '').toLowerCase();
+  if (LATE_NIGHT_SHOP_TYPES.has(shopType)) return true;
+
+  // Default: typical retail hours 7 AM–10 PM
+  return hour >= 7 && hour < 22;
+};
+
+export const calculateRouteSafetyMetrics = (
+  routePath,
+  streetLights = [],
+  trafficSignals = [],
+  shops = []
+) => {
+  if (!routePath || routePath.length === 0) {
+    return {
+      lightingScore: 50,
+      crowdScore: 50,
+      openShops: 50,
+      streetLightsCount: 0,
+      trafficSignalsCount: 0,
+      shopsCount: 0,
+      routeLength: 0
+    };
+  }
+
+  const hour = new Date().getHours(); // real local hour
+  const timeFactor = getTimeOfDayFactor(hour);
+
+  const routeLengthKm = calculateRouteLengthKm(routePath);
+  const lightsCount = streetLights.length;
+  const signalsCount = trafficSignals.length;
+
+  // Only count shops that are actually open right now
+  const openShopsList = shops.filter(s => isShopLikelyOpen(s.tags, hour));
+  const openShopsCount = openShopsList.length;
+
+  const expectedLightsPerKm = 15;
+  const expectedSignalsPerKm = 3;
+  const expectedShopsPerKm = 10;
+
+  const lightsRatio = routeLengthKm > 0 ? lightsCount / (routeLengthKm * expectedLightsPerKm) : 0;
+  const signalsRatio = routeLengthKm > 0 ? signalsCount / (routeLengthKm * expectedSignalsPerKm) : 0;
+  const shopsRatio = routeLengthKm > 0 ? openShopsCount / (routeLengthKm * expectedShopsPerKm) : 0;
+
+  // Lighting is physical — unaffected by time of day (lights ARE on at night)
+  const lightingScore = Math.min(100, Math.round(lightsRatio * 100));
+
+  // Crowd and shops are multiplied by the time-of-day factor
+  // e.g. at 1:30 AM timeFactor ≈ 0.04 → crowd score near 0 even on a busy road
+  const crowdScore = Math.min(100, Math.round(
+    (signalsRatio * 0.5 + shopsRatio * 0.5) * timeFactor * 100
+  ));
+  const openShops = Math.min(100, Math.round(shopsRatio * timeFactor * 100));
+
+  console.log(`[SafetyMetrics] Hour=${hour}, timeFactor=${timeFactor}, lights=${lightsCount}, signals=${signalsCount}, openShops=${openShopsCount}/${shops.length}`);
 
   return {
-    lightingScore: Math.round(lightingScore),
-    crowdScore: Math.round(crowdScore),
-    openShops: Math.round(openShopsScore),
-    streetLightsCount: lightsNearRoute,
-    trafficSignalsCount: signalsNearRoute,
-    shopsCount: shopsNearRoute,
-    routeLength: routeLength
+    lightingScore,
+    crowdScore,
+    openShops,
+    streetLightsCount: lightsCount,
+    trafficSignalsCount: signalsCount,
+    shopsCount: openShopsCount,   // only open shops counted
+    routeLength: routeLengthKm
   };
 };
 
-/**
- * Check if a point is near a route
- */
-const isPointNearRoute = (lat, lng, route, threshold) => {
-  return route.some(coord => {
-    const distance = Math.sqrt(
-      Math.pow(coord[0] - lat, 2) + Math.pow(coord[1] - lng, 2)
-    );
-    return distance < threshold;
-  });
-};
+export const filterSafetyDataForRoute = (
+  routePath,
+  allStreetLights,
+  allTrafficSignals,
+  allShops
+) => {
+  const LIGHT_THRESHOLD = 10;
+  const SIGNAL_THRESHOLD = 30;
+  const SHOP_THRESHOLD = 75;
 
-/**
- * Calculate route length in km
- */
-const calculateRouteLength = (coordinates) => {
-  let length = 0;
-  for (let i = 0; i < coordinates.length - 1; i++) {
-    length += haversineDistance(coordinates[i], coordinates[i + 1]);
-  }
-  return length;
-};
+  const streetLights = allStreetLights.filter(l =>
+    distanceToRouteM(l.lat, l.lng, routePath) <= LIGHT_THRESHOLD
+  );
 
-/**
- * Haversine distance between two points
- */
-const haversineDistance = (coord1, coord2) => {
-  const R = 6371; // Earth's radius in km
-  const lat1 = coord1[0] * Math.PI / 180;
-  const lat2 = coord2[0] * Math.PI / 180;
-  const deltaLat = (coord2[0] - coord1[0]) * Math.PI / 180;
-  const deltaLng = (coord2[1] - coord1[1]) * Math.PI / 180;
+  const trafficSignals = allTrafficSignals.filter(s =>
+    distanceToRouteM(s.lat, s.lng, routePath) <= SIGNAL_THRESHOLD
+  );
 
-  const a = Math.sin(deltaLat/2) * Math.sin(deltaLat/2) +
-            Math.cos(lat1) * Math.cos(lat2) *
-            Math.sin(deltaLng/2) * Math.sin(deltaLng/2);
-  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+  const shops = allShops.filter(s =>
+    distanceToRouteM(s.lat, s.lng, routePath) <= SHOP_THRESHOLD
+  );
 
-  return R * c;
+  return { streetLights, trafficSignals, shops };
 };
 
 export default {
   geocodeAddress,
+  searchPlaces,
   getOSRMRoute,
-  getStreetLights,
-  getTrafficSignals,
-  getShops,
+  getSafetyData,
   calculateBoundingBox,
-  calculateRouteSafetyMetrics
+  calculateRouteSafetyMetrics,
+  filterSafetyDataForRoute,
+  cancelPendingOverpassRequest
 };
