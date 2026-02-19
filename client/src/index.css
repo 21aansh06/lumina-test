@@ -1,0 +1,196 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --cyber-black: #0a0a0f;
+  --cyber-dark: #12121a;
+  --cyber-cyan: #00f5ff;
+  --cyber-purple: #7c3aed;
+  --cyber-amber: #f59e0b;
+}
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+body {
+  font-family: 'Inter', sans-serif;
+  background: var(--cyber-black);
+  color: #ffffff;
+  overflow-x: hidden;
+}
+
+/* Custom scrollbar */
+::-webkit-scrollbar {
+  width: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--cyber-dark);
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--cyber-cyan);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #00d4e0;
+}
+
+/* Glassmorphism */
+.glass {
+  background: rgba(255, 255, 255, 0.05);
+  backdrop-filter: blur(10px);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.glass-hover:hover {
+  background: rgba(255, 255, 255, 0.1);
+  border-color: rgba(0, 245, 255, 0.5);
+  box-shadow: 0 0 20px rgba(0, 245, 255, 0.2);
+}
+
+/* Glowing text */
+.text-glow {
+  text-shadow: 0 0 10px rgba(0, 245, 255, 0.5),
+               0 0 20px rgba(0, 245, 255, 0.3);
+}
+
+.text-glow-purple {
+  text-shadow: 0 0 10px rgba(124, 58, 237, 0.5),
+               0 0 20px rgba(124, 58, 237, 0.3);
+}
+
+/* Gradient text */
+.text-gradient {
+  background: linear-gradient(135deg, #00f5ff 0%, #7c3aed 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+/* Neon border */
+.border-glow {
+  border: 1px solid rgba(0, 245, 255, 0.3);
+  box-shadow: 0 0 10px rgba(0, 245, 255, 0.2),
+              inset 0 0 10px rgba(0, 245, 255, 0.1);
+}
+
+/* Button styles */
+.btn-primary {
+  background: linear-gradient(135deg, #00f5ff 0%, #00c8d0 100%);
+  color: #0a0a0f;
+  font-weight: 600;
+  padding: 0.75rem 1.5rem;
+  border-radius: 0.5rem;
+  transition: all 0.3s ease;
+  box-shadow: 0 0 20px rgba(0, 245, 255, 0.3);
+}
+
+.btn-primary:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 0 30px rgba(0, 245, 255, 0.5);
+}
+
+.btn-secondary {
+  background: transparent;
+  border: 1px solid rgba(0, 245, 255, 0.5);
+  color: #00f5ff;
+  font-weight: 600;
+  padding: 0.75rem 1.5rem;
+  border-radius: 0.5rem;
+  transition: all 0.3s ease;
+}
+
+.btn-secondary:hover {
+  background: rgba(0, 245, 255, 0.1);
+  box-shadow: 0 0 20px rgba(0, 245, 255, 0.2);
+}
+
+/* Input styles */
+.input-cyber {
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  color: white;
+  padding: 0.75rem 1rem;
+  border-radius: 0.5rem;
+  transition: all 0.3s ease;
+}
+
+.input-cyber:focus {
+  outline: none;
+  border-color: #00f5ff;
+  box-shadow: 0 0 15px rgba(0, 245, 255, 0.2);
+}
+
+/* Card styles */
+.card-cyber {
+  background: linear-gradient(135deg, rgba(18, 18, 26, 0.9) 0%, rgba(10, 10, 15, 0.95) 100%);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 1rem;
+  overflow: hidden;
+}
+
+/* Safety score colors */
+.safety-high { color: #10b981; }
+.safety-moderate { color: #f59e0b; }
+.safety-low { color: #ef4444; }
+
+.bg-safety-high { background-color: #10b981; }
+.bg-safety-moderate { background-color: #f59e0b; }
+.bg-safety-low { background-color: #ef4444; }
+
+/* Loading skeleton */
+.skeleton {
+  background: linear-gradient(90deg, rgba(255,255,255,0.05) 25%, rgba(255,255,255,0.1) 50%, rgba(255,255,255,0.05) 75%);
+  background-size: 1000px 100%;
+  animation: shimmer 2s infinite;
+}
+
+/* Leaflet Map styles */
+.leaflet-container {
+  border-radius: 0.75rem;
+  overflow: hidden;
+  background: #1a1a1a;
+  font-family: 'Inter', sans-serif;
+}
+
+.leaflet-popup-content-wrapper {
+  background: rgba(18, 18, 26, 0.95);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 0.5rem;
+  color: white;
+}
+
+.leaflet-popup-tip {
+  background: rgba(18, 18, 26, 0.95);
+}
+
+.leaflet-control-attribution {
+  background: rgba(0, 0, 0, 0.7) !important;
+  color: rgba(255, 255, 255, 0.6) !important;
+}
+
+.leaflet-control-attribution a {
+  color: var(--cyber-cyan) !important;
+}
+
+/* Custom marker styles */
+.custom-div-icon {
+  background: transparent;
+  border: none;
+}
+
+/* Animation utilities */
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(20px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.animate-fadeIn {
+  animation: fadeIn 0.5s ease-out forwards;
+}

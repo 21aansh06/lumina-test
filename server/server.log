@@ -1,0 +1,106 @@
+
+> lumina-server@1.0.0 start
+> node server.js
+
+⚠️  Firebase Admin SDK not configured
+   Running in DEMO mode - tokens will not be verified
+   Set FIREBASE_SERVICE_ACCOUNT to enable production mode
+MongoDB Connected: localhost
+
+    ╔═══════════════════════════════════════════════════════╗
+    ║                                                       ║
+    ║   🌟 LUMINA SERVER                                    ║
+    ║   AI-First Safety Navigation Platform                 ║
+    ║                                                       ║
+    ║   Server running on port 5000                      ║
+    ║   Environment: development                    ║
+    ║                                                       ║
+    ║   🤖 AI Agents Active:                                ║
+    ║      • Scout Agent    - Real-time incident detection  ║
+    ║      • Verifier Agent - Image verification            ║
+    ║      • Guardian Agent - Live trip monitoring          ║
+    ║                                                       ║
+    ╚═══════════════════════════════════════════════════════╝
+    
+Client connected: w8vmW0O-EDS4_6LPAAAB
+Client connected: HJuJyo9ibndSGC08AAAD
+User 69970adf7e335269d7bb2a61 authenticated on socket HJuJyo9ibndSGC08AAAD
+User 69970adf7e335269d7bb2a61 authenticated on socket HJuJyo9ibndSGC08AAAD
+Client connected: oVQgtGgiNTc8u-yHAAAF
+2026-02-19T13:21:29.080Z | GET /api/health
+2026-02-19T13:21:59.126Z | GET /api/health
+2026-02-19T13:21:59.426Z | POST /api/auth/firebase-verify
+🔓 Demo mode: Accepting token without verification
+2026-02-19T13:21:59.518Z | POST /api/auth/demo-login
+2026-02-19T13:22:12.895Z | POST /api/auth/onboard
+2026-02-19T13:22:13.061Z | POST /api/routes/calculate
+⚠️  No valid Gemini API key found. Using mock routes.
+Client disconnected: HJuJyo9ibndSGC08AAAD
+Client connected: ik8ZclN-dVl5OuSiAAAI
+2026-02-19T13:23:45.057Z | POST /api/auth/firebase-verify
+🔓 Demo mode: Accepting token without verification
+Client disconnected: ik8ZclN-dVl5OuSiAAAI
+Client connected: wHJuO6EiRd0P_b8hAAAK
+User 69970adf7e335269d7bb2a61 authenticated on socket wHJuO6EiRd0P_b8hAAAK
+User 69970adf7e335269d7bb2a61 authenticated on socket wHJuO6EiRd0P_b8hAAAK
+Client connected: sRu1FSP_Iv9agUe1AAAM
+Client disconnected: sRu1FSP_Iv9agUe1AAAM
+Client connected: E5R3Ho8WddL1QFBVAAAP
+2026-02-19T13:23:54.326Z | POST /api/auth/firebase-verify
+🔓 Demo mode: Accepting token without verification
+Client disconnected: E5R3Ho8WddL1QFBVAAAP
+Client connected: p7zroAQKH4Lis7oEAAAR
+User 69970adf7e335269d7bb2a61 authenticated on socket p7zroAQKH4Lis7oEAAAR
+User 69970adf7e335269d7bb2a61 authenticated on socket p7zroAQKH4Lis7oEAAAR
+Client disconnected: w8vmW0O-EDS4_6LPAAAB
+Client disconnected: oVQgtGgiNTc8u-yHAAAF
+Client disconnected: p7zroAQKH4Lis7oEAAAR
+Client disconnected: wHJuO6EiRd0P_b8hAAAK
+Client connected: HuLmsdzMx8JPuBWbAAAU
+2026-02-19T13:24:11.754Z | POST /api/auth/firebase-verify
+🔓 Demo mode: Accepting token without verification
+Client disconnected: HuLmsdzMx8JPuBWbAAAU
+Client connected: qYWhzg0PdZYSGhIUAAAW
+User 69970adf7e335269d7bb2a61 authenticated on socket qYWhzg0PdZYSGhIUAAAW
+User 69970adf7e335269d7bb2a61 authenticated on socket qYWhzg0PdZYSGhIUAAAW
+2026-02-19T13:24:19.824Z | POST /api/auth/onboard
+2026-02-19T13:24:19.862Z | GET /api/admin/stats
+2026-02-19T13:24:19.944Z | GET /api/admin/stats
+2026-02-19T13:26:13.628Z | POST /api/routes/calculate
+⚠️  No valid Gemini API key found. Using mock routes.
+[2026-02-19T13:30:07.398Z] GUARDIAN | START | Guardian monitoring started for user 69970adf7e335269d7bb2a61, trip trip-1771507807397
+[2026-02-19T13:30:08.686Z] GUARDIAN | END | Guardian monitoring ended for user 69970adf7e335269d7bb2a61
+[2026-02-19T13:30:20.234Z] GUARDIAN | START | Guardian monitoring started for user 69970adf7e335269d7bb2a61, trip trip-1771507820234
+[2026-02-19T13:30:21.644Z] GUARDIAN | END | Guardian monitoring ended for user 69970adf7e335269d7bb2a61
+2026-02-19T13:30:31.993Z | GET /api/admin/stats
+2026-02-19T13:30:32.009Z | GET /api/admin/stats
+Client disconnected: qYWhzg0PdZYSGhIUAAAW
+Client connected: Rp_0G_Dgu4DRcZCTAAAY
+User 69970adf7e335269d7bb2a61 authenticated on socket Rp_0G_Dgu4DRcZCTAAAY
+User 69970adf7e335269d7bb2a61 authenticated on socket Rp_0G_Dgu4DRcZCTAAAY
+Client disconnected: Rp_0G_Dgu4DRcZCTAAAY
+Client connected: ClMzYKdfHVHxhmF2AAAb
+2026-02-19T13:37:32.918Z | POST /api/auth/firebase-verify
+🔓 Demo mode: Accepting token without verification
+Client disconnected: ClMzYKdfHVHxhmF2AAAb
+2026-02-19T13:37:33.027Z | GET /api/admin/stats
+2026-02-19T13:37:33.048Z | GET /api/admin/stats
+Client connected: YdGTq-U_w2nzxVa6AAAd
+User 69970adf7e335269d7bb2a61 authenticated on socket YdGTq-U_w2nzxVa6AAAd
+User 69970adf7e335269d7bb2a61 authenticated on socket YdGTq-U_w2nzxVa6AAAd
+2026-02-19T13:37:41.548Z | GET /api/analytics/69970adf7e335269d7bb2a61
+2026-02-19T13:37:41.605Z | GET /api/analytics/69970adf7e335269d7bb2a61
+2026-02-19T13:37:47.651Z | GET /api/admin/stats
+2026-02-19T13:37:47.675Z | GET /api/admin/stats
+2026-02-19T13:45:51.645Z | GET /api/analytics/69970adf7e335269d7bb2a61
+2026-02-19T13:45:51.659Z | GET /api/analytics/69970adf7e335269d7bb2a61
+2026-02-19T13:46:02.818Z | GET /api/admin/stats
+2026-02-19T13:46:02.836Z | GET /api/admin/stats
+Client disconnected: YdGTq-U_w2nzxVa6AAAd
+Client connected: ZR-wz7C1lpAQzV8sAAAf
+User 69970adf7e335269d7bb2a61 authenticated on socket ZR-wz7C1lpAQzV8sAAAf
+User 69970adf7e335269d7bb2a61 authenticated on socket ZR-wz7C1lpAQzV8sAAAf
+Client disconnected: ZR-wz7C1lpAQzV8sAAAf
+Client connected: 0bcRnuyE_J-cljBjAAAh
+User 69970adf7e335269d7bb2a61 authenticated on socket 0bcRnuyE_J-cljBjAAAh
+User 69970adf7e335269d7bb2a61 authenticated on socket 0bcRnuyE_J-cljBjAAAh
