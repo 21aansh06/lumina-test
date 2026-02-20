@@ -67,19 +67,62 @@ export const getOSRMRoute = async (coordinates) => {
       throw new Error("Route calculation failed");
     }
 
-    return response.data.routes.slice(0, 3).map((route, index) => ({
-      routeId: `route-${String.fromCharCode(97 + index)}`,
-      distance: route.distance,
-      duration: route.duration,
-      geometry: route.geometry,
-      legs: route.legs,
-      path: route.geometry.coordinates.map((c) => [c[1], c[0]])
-    }));
+    let routes = response.data.routes;
+
+    // If only 1 route, we duplicate it with an offset for demo purposes if needed, 
+    // but better to just work with what OSRM gives us.
+    // The requirement says "up to 5 alternative routes".
+
+    return routes.slice(0, 5).map((route, index) => {
+      const offsetMeters = index * 8; // 8m separation for each alternative
+      const path = [];
+
+      for (let i = 0; i < route.geometry.coordinates.length; i++) {
+        const [lng, lat] = route.geometry.coordinates[i];
+
+        if (i === 0) {
+          path.push([lat, lng]);
+          continue;
+        }
+
+        const [prevLng, prevLat] = route.geometry.coordinates[i - 1];
+
+        const dx = lng - prevLng;
+        const dy = lat - prevLat;
+        const length = Math.sqrt(dx * dx + dy * dy);
+
+        if (length === 0) {
+          path.push([lat, lng]);
+          continue;
+        }
+
+        // Perpendicular unit vector for visual separation of routes on map
+        const ux = -dy / length;
+        const uy = dx / length;
+
+        const offsetLng = lng + ux * (offsetMeters / 111320);
+        const offsetLat = lat + uy * (offsetMeters / 110540);
+
+        path.push([offsetLat, offsetLng]);
+      }
+
+      return {
+        routeId: `route-${String.fromCharCode(97 + index)}`,
+        distance: route.distance,
+        duration: route.duration,
+        geometry: route.geometry,
+        legs: route.legs,
+        path
+      };
+    });
+
   } catch (error) {
     console.error("OSRM routing error:", error.message);
     throw error;
   }
 };
+
+
 
 const toRad = (deg) => (deg * Math.PI) / 180;
 const toDeg = (rad) => (rad * 180) / Math.PI;

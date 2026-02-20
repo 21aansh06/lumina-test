@@ -93,7 +93,7 @@ app.use('/api/analytics', analyticsRoutes);
 const _osmCache = new Map();
 const _NOMINATIM = 'https://nominatim.openstreetmap.org';
 const _OSM_HEADERS = {
-  'User-Agent': 'Lumina-Safety-App/1.0 (contact:aansh6473@gmail.com)',
+  'User-Agent': 'Lumina-Safety-App/1.0 (contact: aansh6473@gmail.com)',
   'Accept-Language': 'en',
   'Accept': 'application/json'
 };
@@ -113,17 +113,44 @@ function _osmCacheSet(key, data) {
 app.get('/api/geocode', async (req, res) => {
   const q = (req.query.q || '').trim();
   if (!q) return res.status(400).json({ error: 'q is required' });
+
   const key = `geocode:${q.toLowerCase()}`;
   const cached = _osmCacheGet(key);
   if (cached) return res.json(cached);
+
+  const trySearch = async (query) => {
+    try {
+      return await axios.get(`${_NOMINATIM}/search`, {
+        params: { q: query, format: 'json', limit: 1 },
+        headers: _OSM_HEADERS,
+        timeout: 8000
+      });
+    } catch (e) {
+      return null;
+    }
+  };
+
   try {
-    const r = await axios.get(`${_NOMINATIM}/search`, {
-      params: { q, format: 'json', limit: 1 },
-      headers: _OSM_HEADERS,
-      timeout: 8000
-    });
-    const data = r.data || [];
-    if (data.length === 0) return res.status(404).json({ error: 'Address not found' });
+    // Attempt 1: Full specific query
+    let r = await trySearch(q);
+    let data = r?.data || [];
+
+    // Attempt 2: Fallback - if full address fails, try simplified version
+    // Use first part (landmark/street) and last part (city/area)
+    if (data.length === 0 && q.includes(',')) {
+      const parts = q.split(',').map(p => p.trim());
+      if (parts.length > 2) {
+        const fuzzyQuery = `${parts[0]}, ${parts[parts.length - 1]}`;
+        console.log(`[OSM geocode] Fallback: "${q}" -> "${fuzzyQuery}"`);
+        r = await trySearch(fuzzyQuery);
+        data = r?.data || [];
+      }
+    }
+
+    if (data.length === 0) {
+      return res.status(404).json({ error: 'Address not found' });
+    }
+
     _osmCacheSet(key, data);
     return res.json(data);
   } catch (err) {
