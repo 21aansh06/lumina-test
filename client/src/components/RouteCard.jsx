@@ -20,15 +20,14 @@ const RouteCard = ({ route, isSelected, onClick, index }) => {
       whileHover={{ scale: 1.02 }}
       whileTap={{ scale: 0.98 }}
       onClick={onClick}
-      className={`p-4 rounded-xl cursor-pointer transition-all ${
-        isSelected 
-          ? 'bg-cyber-cyan/10 border-2 border-cyber-cyan' 
+      className={`p-4 rounded-xl cursor-pointer transition-all ${isSelected
+          ? 'bg-cyber-cyan/10 border-2 border-cyber-cyan'
           : 'glass glass-hover border border-white/10'
-      }`}
+        }`}
     >
       <div className="flex items-start justify-between mb-3">
         <div className="flex items-center gap-3">
-          <div 
+          <div
             className="w-3 h-3 rounded-full"
             style={{ backgroundColor: route.color || '#00f5ff' }}
           />
@@ -62,37 +61,54 @@ const RouteCard = ({ route, isSelected, onClick, index }) => {
         </div>
       </div>
 
-      {/* Mini score bars */}
-      <div className="mt-3 space-y-1">
-        <div className="flex items-center gap-2">
-          <span className="text-xs text-cyber-light w-16">Lighting</span>
-          <div className="flex-1 h-1.5 bg-white/10 rounded-full overflow-hidden">
-            <div 
-              className="h-full bg-cyber-cyan rounded-full"
-              style={{ width: `${route.lightingScore}%` }}
-            />
+      {/* Mini score bars with counts */}
+      <div className="mt-4 space-y-2">
+        <div className="flex flex-col gap-1">
+          <div className="flex justify-between items-center text-[10px] text-cyber-light uppercase tracking-wider">
+            <span>Lighting</span>
+            <span className="text-cyber-cyan">{route.streetLightsCount || 0} Lights</span>
           </div>
-          <span className="text-xs w-8 text-right">{route.lightingScore}</span>
+          <div className="flex items-center gap-2">
+            <div className="flex-1 h-1 bg-white/5 rounded-full overflow-hidden">
+              <div
+                className="h-full bg-cyber-cyan rounded-full shadow-[0_0_8px_rgba(0,245,255,0.5)]"
+                style={{ width: `${route.lightingScore}%` }}
+              />
+            </div>
+            <span className="text-[10px] w-6 text-right font-mono">{route.lightingScore}%</span>
+          </div>
         </div>
-        <div className="flex items-center gap-2">
-          <span className="text-xs text-cyber-light w-16">Crowd</span>
-          <div className="flex-1 h-1.5 bg-white/10 rounded-full overflow-hidden">
-            <div 
-              className="h-full bg-cyber-purple rounded-full"
-              style={{ width: `${route.crowdScore}%` }}
-            />
+
+        <div className="flex flex-col gap-1">
+          <div className="flex justify-between items-center text-[10px] text-cyber-light uppercase tracking-wider">
+            <span>Crowd / Signals</span>
+            <span className="text-cyber-purple">{route.trafficSignalsCount || 0} Signals</span>
           </div>
-          <span className="text-xs w-8 text-right">{route.crowdScore}</span>
+          <div className="flex items-center gap-2">
+            <div className="flex-1 h-1 bg-white/5 rounded-full overflow-hidden">
+              <div
+                className="h-full bg-cyber-purple rounded-full shadow-[0_0_8px_rgba(188,19,254,0.5)]"
+                style={{ width: `${route.crowdScore}%` }}
+              />
+            </div>
+            <span className="text-[10px] w-6 text-right font-mono">{route.crowdScore}%</span>
+          </div>
         </div>
-        <div className="flex items-center gap-2">
-          <span className="text-xs text-cyber-light w-16">Shops</span>
-          <div className="flex-1 h-1.5 bg-white/10 rounded-full overflow-hidden">
-            <div 
-              className="h-full bg-cyber-amber rounded-full"
-              style={{ width: `${route.openShops}%` }}
-            />
+
+        <div className="flex flex-col gap-1">
+          <div className="flex justify-between items-center text-[10px] text-cyber-light uppercase tracking-wider">
+            <span>Active Shops</span>
+            <span className="text-cyber-amber">{route.shopsCount || 0} Open</span>
           </div>
-          <span className="text-xs w-8 text-right">{route.openShops}</span>
+          <div className="flex items-center gap-2">
+            <div className="flex-1 h-1 bg-white/5 rounded-full overflow-hidden">
+              <div
+                className="h-full bg-cyber-amber rounded-full shadow-[0_0_8px_rgba(245,158,11,0.5)]"
+                style={{ width: `${route.openShops}%` }}
+              />
+            </div>
+            <span className="text-[10px] w-6 text-right font-mono">{route.openShops}%</span>
+          </div>
         </div>
       </div>
     </motion.div>

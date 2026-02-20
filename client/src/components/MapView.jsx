@@ -79,9 +79,10 @@ const MapView = ({
   onRouteSelect,
   origin,
   destination,
-  showSafetyData = true
+  showSafetyData = true,
+  initialSafetyData = null
 }) => {
-  const [safetyData, setSafetyData] = useState({
+  const [safetyData, setSafetyData] = useState(initialSafetyData || {
     streetLights: [],
     trafficSignals: [],
     shops: []
@@ -92,14 +93,24 @@ const MapView = ({
   const fetchIdRef = useRef(0);
   const isMountedRef = useRef(true);
 
+  // Update safety data if initialSafetyData changes
+  useEffect(() => {
+    if (initialSafetyData) {
+      setSafetyData(initialSafetyData);
+    }
+  }, [initialSafetyData]);
+
   const primaryRoute = routes[0];
   const routeFingerprint = useMemo(() => {
     if (!primaryRoute?.path?.length) return "";
-    const path = primaryRoute.path;
-    const start = path[0];
-    const end = path[path.length - 1];
-    return `${start[0].toFixed(4)},${start[1].toFixed(4)}-${end[0].toFixed(4)},${end[1].toFixed(4)}`;
-  }, [primaryRoute]);
+    // If we have multiple routes, the fingerprint should represent all of them 
+    // to trigger re-fetch if the destination changes
+    return routes.map(r => {
+      const start = r.path[0];
+      const end = r.path[r.path.length - 1];
+      return `${start[0].toFixed(4)},${start[1].toFixed(4)}-${end[0].toFixed(4)},${end[1].toFixed(4)}`;
+    }).join('|');
+  }, [routes]);
 
   const debouncedFingerprint = useDebouncedValue(routeFingerprint, 500);
 
@@ -112,6 +123,11 @@ const MapView = ({
 
   useEffect(() => {
     const fetchData = async () => {
+      // If we already have initialSafetyData and the fingerprint hasn't changed drastically, skip
+      if (initialSafetyData && routes.length > 0) {
+        return;
+      }
+
       if (!debouncedFingerprint || !showSafetyData || routes.length === 0) {
         return;
       }
@@ -127,12 +143,13 @@ const MapView = ({
       setLoading(true);
 
       try {
-        const primaryPath = routes[0].path;
-        if (!primaryPath || primaryPath.length < 2) {
+        // Fetch for all paths or at least the selected one
+        const path = selectedRoute?.path || routes[0].path;
+        if (!path || path.length < 2) {
           return;
         }
 
-        const data = await getSafetyData(primaryPath, 150);
+        const data = await getSafetyData(path, 150);
 
         if (!isMountedRef.current) return;
         if (currentFetchId !== fetchIdRef.current) return;

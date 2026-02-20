@@ -14,7 +14,7 @@ class ScoutAgent {
   async processIncident(text, io) {
     try {
       this.logStep('RECEIVED', `Processing incident report: "${text}"`);
-      
+
       // Send to Gemini for analysis
       const prompt = `Analyze this text for public safety incidents. Does it describe a fire, protest, flood, infrastructure failure, accident, or crime?
 
@@ -35,10 +35,10 @@ If it is NOT a safety incident, return ONLY:
 Respond with ONLY valid JSON, no markdown formatting.`;
 
       this.logStep('AI_ANALYSIS', 'Sending to Gemini for classification...');
-      
+
       const result = await this.model.generateContent(prompt);
       const response = result.response.text();
-      
+
       // Parse JSON response
       let analysis;
       try {
@@ -104,10 +104,10 @@ Respond with ONLY valid JSON, no markdown formatting.`;
       [-87.6298, 41.8781],  // Chicago
       [-122.4194, 37.7749], // SF
     ];
-    
+
     const randomBase = baseCoords[Math.floor(Math.random() * baseCoords.length)];
     const jitter = () => (Math.random() - 0.5) * 0.02;
-    
+
     const incident = new Incident({
       type: analysis.type,
       location: {
@@ -126,7 +126,7 @@ Respond with ONLY valid JSON, no markdown formatting.`;
 
   async updateRoadSegments(incident) {
     const affectedRadius = incident.severity * 100; // meters
-    
+
     // Find nearby road segments
     const nearbySegments = await RoadSegment.find({
       geometry: {
@@ -146,7 +146,7 @@ Respond with ONLY valid JSON, no markdown formatting.`;
       // Increase incident impact based on severity
       const impactIncrease = incident.severity * 3;
       segment.incidentImpact = Math.min(100, segment.incidentImpact + impactIncrease);
-      
+
       // Recalculate safety score
       segment.safetyScore = calculateSafety({
         lightingScore: segment.lightingScore,
@@ -154,7 +154,7 @@ Respond with ONLY valid JSON, no markdown formatting.`;
         openShops: segment.openShops,
         incidentImpact: segment.incidentImpact
       });
-      
+
       segment.lastUpdated = new Date();
       await segment.save();
       updatedSegments.push(segment);
@@ -167,7 +167,7 @@ Respond with ONLY valid JSON, no markdown formatting.`;
     const timestamp = new Date().toISOString();
     const logEntry = `[${timestamp}] SCOUT | ${step} | ${message}`;
     console.log(logEntry);
-    
+
     if (this.io) {
       this.io.emit('scout_log', { step, message, timestamp });
     }

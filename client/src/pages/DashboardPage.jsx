@@ -145,20 +145,20 @@ const DashboardPage = () => {
       const osrmRoutes = await getOSRMRoute(coordinates);
 
       const allRouteCoords = osrmRoutes.flatMap(route => route.path);
-      const bbox = calculateBoundingBox(allRouteCoords, 0.005);
+      const bbox = calculateBoundingBox(allRouteCoords, 0.008);
 
       let streetLights = [], trafficSignals = [], shops = [];
       try {
-        console.log('Fetching safety data from Overpass...');
+        console.log(`[Overpass] Fetching safety data for BBox: ${bbox.join(",")}`);
         const safetyResponse = await api.get("/api/overpass", {
           params: { bbox: bbox.join(",") }
         });
         streetLights = safetyResponse.data.streetLights || [];
         trafficSignals = safetyResponse.data.trafficSignals || [];
         shops = safetyResponse.data.shops || [];
+        console.log(`[Overpass] Data Loaded: ${streetLights.length} lights, ${trafficSignals.length} signals, ${shops.length} shops`);
       } catch (safetyErr) {
-        console.warn('Safety data fetch failed, continuing with partial data:', safetyErr.message);
-        // We continue with empty arrays so the app doesn't crash
+        console.warn('Safety data fetch failed:', safetyErr.message);
       }
 
       let enhancedRoutes = osrmRoutes.map((route, index) => {
@@ -180,7 +180,11 @@ const DashboardPage = () => {
           originalDistance: route.distance,
           originalDuration: route.duration,
           distance: (route.distance / 1000).toFixed(1) + " km",
-          estimatedTime: `${Math.round(route.duration / 60)} mins`,
+          estimatedTime: route.duration >= 3600
+            ? `${Math.floor(route.duration / 3600)}h ${Math.floor((route.duration % 3600) / 60)}m`
+            : route.duration >= 60
+              ? `${Math.floor(route.duration / 60)}m ${Math.round(route.duration % 60)}s`
+              : `${Math.round(route.duration)}s`,
           estimatedMinutes: Math.round(route.duration / 60),
           safetyScore,
           lightingScore: safetyMetrics.lightingScore,
@@ -204,80 +208,109 @@ const DashboardPage = () => {
       const shortestDistance = Math.min(...enhancedRoutes.map(r => r.originalDistance));
       const fastestDuration = Math.min(...enhancedRoutes.map(r => r.originalDuration));
 
-      // Step 2: Filter out any route that is more than 30% longer than the shortest
-      // This ensures we only recommend routes that are "reasonably fast"
-      enhancedRoutes = enhancedRoutes.filter(r => r.originalDistance <= shortestDistance * 1.3);
+      // Step 2: Filter out any route that is more than 30% longer than the shortest for candidates
+      let candidateRoutes = enhancedRoutes.filter(r => r.originalDistance <= shortestDistance * 1.3);
+      if (candidateRoutes.length === 0) candidateRoutes = enhancedRoutes;
 
-      // Step 3: Calculate a "Final Ranking Score" that balances safety and efficiency
-      // FinalScore = (SafetyScore * 0.7) + (EfficiencyScore * 0.3)
-      // Where EfficiencyScore is inversly proportional to the duration overhead
-      enhancedRoutes = enhancedRoutes.map(route => {
-        const timeOverhead = route.originalDuration / fastestDuration; // 1.0 = fastest, 1.2 = 20% slower
-        const efficiencyScore = Math.max(0, 100 - (timeOverhead - 1) * 200); // 100 for fastest, drops quickly
+      // Step 3: Calculate a "Final Ranking Score" for Safest (balancing safety and efficiency)
+      candidateRoutes = candidateRoutes.map(route => {
+        const timeOverhead = route.originalDuration / fastestDuration;
+        const efficiencyScore = Math.max(0, 100 - (timeOverhead - 1) * 200);
         const combinedScore = Math.round((route.safetyScore * 0.7) + (efficiencyScore * 0.3));
-
         return { ...route, combinedScore };
       });
 
-      // Step 4: Identify Safest and Fastest
-      const safestCandidate = [...enhancedRoutes].sort((a, b) => b.combinedScore - a.combinedScore)[0];
-      const fastestCandidate = [...enhancedRoutes].sort((a, b) => a.originalDuration - b.originalDuration)[0];
+      // Step 4: Identify Safest and Fastest candidates
+      const safestCandidateRaw = [...candidateRoutes].sort((a, b) => b.combinedScore - a.combinedScore)[0];
+      const fastestCandidateRaw = [...enhancedRoutes].sort((a, b) => a.originalDuration - b.originalDuration)[0];
 
-      // Step 5: Finalise labels, badges and colors for comparison
-      enhancedRoutes = enhancedRoutes.map((route) => {
-        const isSafest = route.routeId === safestCandidate?.routeId;
-        const isFastest = route.routeId === fastestCandidate?.routeId;
+      // Step 5: DEEP FETCH for FASTEST ROUTE (Independent logic as requested)
+      console.log("🚀 Performing dedicated POI fetch for Fastest Route...");
+      let fastestRouteData = { ...fastestCandidateRaw };
+      try {
+        // Convert path to server-expected polyline format: "lat,lng lat,lng ..."
+        const polylineStr = fastestCandidateRaw.path.map(([lat, lng]) => `${lat.toFixed(6)},${lng.toFixed(6)}`).join(' ');
 
-        let badge = "ALTERNATIVE";
-        let color = "#94a3b8"; // Gray for alternatives
-        let labelSuffix = "";
+        const dedicatedResponse = await api.get("/api/overpass", {
+          params: { polyline: polylineStr, radius: 100 }
+        });
 
-        if (isSafest && isFastest) {
-          badge = "SAFEST & FASTEST";
-          color = "#10b981"; // GREEN
-          labelSuffix = " (Optimal)";
-        } else if (isSafest) {
-          badge = "SAFEST";
-          color = "#10b981"; // GREEN
-          labelSuffix = " (Recommended)";
-        } else if (isFastest) {
-          badge = "FASTEST";
-          color = "#ef4444"; // RED
-          labelSuffix = " (Quickest)";
-        } else {
-          badge = "MODERATE";
-          color = "#f59e0b"; // Amber
-        }
+        const dStreetLights = dedicatedResponse.data.streetLights || [];
+        const dTrafficSignals = dedicatedResponse.data.trafficSignals || [];
+        const dShops = dedicatedResponse.data.shops || [];
 
-        return {
-          ...route,
-          routeId: `route-${route.routeId.split('-')[1]}`, // keep ID simple
-          label: `Route ${String.fromCharCode(65 + parseInt(route.routeId.split('-')[1]))}${labelSuffix}`,
-          badge,
-          color,
-          recommended: isSafest
+        const dMetrics = calculateRouteSafetyMetrics(
+          fastestCandidateRaw.path,
+          dStreetLights,
+          dTrafficSignals,
+          dShops
+        );
+
+        const dSafetyScore = Math.round(
+          (dMetrics.lightingScore * 0.4) +
+          (dMetrics.crowdScore * 0.3) +
+          (dMetrics.openShops * 0.3)
+        );
+
+        fastestRouteData = {
+          ...fastestRouteData,
+          safetyScore: dSafetyScore,
+          lightingScore: dMetrics.lightingScore,
+          crowdScore: dMetrics.crowdScore,
+          openShops: dMetrics.openShops,
+          streetLightsCount: dMetrics.streetLightsCount,
+          trafficSignalsCount: dMetrics.trafficSignalsCount,
+          shopsCount: dMetrics.shopsCount,
+          aiNarrative: `Fastest Path Analysis: This route offers ${dMetrics.streetLightsCount} lights and ${dMetrics.shopsCount} open venus focused specifically on the quickest path. Efficiency prioritized.`,
+          isHighAccuracy: true
         };
+        console.log(`✅ Dedicated fetch complete: ${dMetrics.streetLightsCount} lights for fastest route.`);
+      } catch (err) {
+        console.warn('Dedicated fetch for fastest route failed, using initial data:', err.message);
+      }
+
+      // Step 6: Finalise labels and combine into final array
+      // We create TWO separate objects to ensure independent rendering even if they share same path
+      const finalRoutes = [];
+
+      // Add SAFEST Route
+      finalRoutes.push({
+        ...safestCandidateRaw,
+        routeId: "route-safest",
+        label: "Safest Route",
+        badge: "SAFEST",
+        color: "#10b981",
+        recommended: true
       });
 
-      // Sort so Safest comes first, then Fastest, then others
-      enhancedRoutes.sort((a, b) => {
-        if (a.badge.includes("SAFEST")) return -1;
-        if (b.badge.includes("SAFEST")) return 1;
-        if (a.badge === "FASTEST") return -1;
-        if (b.badge === "FASTEST") return 1;
-        return 0;
+      // Add FASTEST Route
+      finalRoutes.push({
+        ...fastestRouteData,
+        routeId: "route-fastest",
+        label: "Fastest Route",
+        badge: "FASTEST",
+        color: "#ef4444",
+        recommended: false
       });
+
+      // Add one alternative if available and different
+      const alternative = enhancedRoutes.find(r => r.routeId !== safestCandidateRaw.routeId && r.routeId !== fastestCandidateRaw.routeId);
+      if (alternative) {
+        finalRoutes.push({
+          ...alternative,
+          routeId: "route-alternative",
+          label: "Alternative Route",
+          badge: "MODERATE",
+          color: "#f59e0b"
+        });
+      }
 
       navigate("/map", {
         state: {
-          routes: enhancedRoutes,
+          routes: finalRoutes,
           origin: originData,
           destination: destinationData,
-          safetyData: {
-            streetLights,
-            trafficSignals,
-            shops
-          }
+          safetyData: { streetLights, trafficSignals, shops }
         }
       });
 

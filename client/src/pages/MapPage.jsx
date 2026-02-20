@@ -1,8 +1,8 @@
 import React, { useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
-import { 
-  ArrowLeft, Navigation, Clock, Shield, AlertTriangle, 
+import {
+  ArrowLeft, Navigation, Clock, Shield, AlertTriangle,
   Play, Square, AlertCircle, CheckCircle, X
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
@@ -17,12 +17,12 @@ const MapPage = () => {
   const location = useLocation();
   const { user } = useAuth();
   const { socket, startTrip, endTrip, sendLocation } = useSocket();
-  
+
   const [routes, setRoutes] = useState(location.state?.routes || []);
   const [origin] = useState(location.state?.origin || null);
   const [destination] = useState(location.state?.destination || null);
   const [safetyData] = useState(location.state?.safetyData || { streetLights: [], trafficSignals: [], shops: [] });
-  const [selectedRoute, setSelectedRoute] = useState(null);
+  const [selectedRoute, setSelectedRoute] = useState(location.state?.routes?.[0] || null);
   const [activeTrip, setActiveTrip] = useState(null);
   const [guardianAlert, setGuardianAlert] = useState(null);
   const [showFeedback, setShowFeedback] = useState(false);
@@ -52,16 +52,16 @@ const MapPage = () => {
 
   const handleStartTrip = () => {
     if (!selectedRoute) return;
-    
+
     const tripId = `trip-${Date.now()}`;
     setActiveTrip({
       id: tripId,
       route: selectedRoute,
       startTime: new Date()
     });
-    
+
     startTrip(tripId);
-    
+
     // Start location tracking simulation
     const interval = setInterval(() => {
       if (selectedRoute?.path?.length > 0) {
@@ -70,7 +70,7 @@ const MapPage = () => {
         sendLocation(coord[0], coord[1]);
       }
     }, 10000);
-    
+
     setActiveTrip(prev => ({ ...prev, interval }));
   };
 
@@ -93,7 +93,7 @@ const MapPage = () => {
       <header className="glass border-b border-white/10 z-30">
         <div className="container mx-auto px-4 py-4">
           <div className="flex items-center justify-between">
-            <button 
+            <button
               onClick={() => navigate('/dashboard')}
               className="flex items-center gap-2 text-cyber-light hover:text-white transition-colors"
             >
@@ -122,13 +122,14 @@ const MapPage = () => {
       <div className="flex-1 flex relative overflow-hidden">
         {/* Map - Using Leaflet with OpenStreetMap */}
         <div className="flex-1 relative">
-          <MapView 
+          <MapView
             routes={routes}
             selectedRoute={selectedRoute}
             onRouteSelect={setSelectedRoute}
             origin={origin}
             destination={destination}
             showSafetyData={true}
+            initialSafetyData={safetyData}
           />
         </div>
 
@@ -136,25 +137,65 @@ const MapPage = () => {
         <motion.div
           initial={{ x: 300, opacity: 0 }}
           animate={{ x: 0, opacity: 1 }}
-          className="w-96 glass border-l border-white/10 overflow-y-auto z-20"
+          className="w-[500px] glass border-l border-white/10 overflow-y-auto z-20"
         >
           <div className="p-6">
             <h2 className="text-xl font-display font-bold mb-6 flex items-center gap-2">
               <Shield className="w-6 h-6 text-cyber-cyan" />
-              Route Options
+              Route Comparison
             </h2>
 
-            <div className="space-y-4">
-              {routes.map((route, index) => (
-                <RouteCard
-                  key={route.routeId}
-                  route={route}
-                  isSelected={selectedRoute?.routeId === route.routeId}
-                  onClick={() => setSelectedRoute(route)}
-                  index={index}
-                />
-              ))}
+            <div className="grid grid-cols-2 gap-4 mb-6">
+              {/* Left Column: Safest */}
+              <div className="space-y-4">
+                <h3 className="text-xs font-bold text-cyber-green uppercase tracking-widest px-1">Safest Route</h3>
+                {routes
+                  .filter(r => r.badge.includes("SAFEST"))
+                  .map((route, index) => (
+                    <RouteCard
+                      key={route.routeId}
+                      route={route}
+                      isSelected={selectedRoute?.routeId === route.routeId}
+                      onClick={() => setSelectedRoute(route)}
+                      index={index}
+                    />
+                  ))}
+              </div>
+
+              {/* Right Column: Fastest */}
+              <div className="space-y-4">
+                <h3 className="text-xs font-bold text-cyber-red uppercase tracking-widest px-1">Fastest Route</h3>
+                {routes
+                  .filter(r => r.badge.includes("FASTEST"))
+                  .map((route, index) => (
+                    <RouteCard
+                      key={route.routeId}
+                      route={route}
+                      isSelected={selectedRoute?.routeId === route.routeId}
+                      onClick={() => setSelectedRoute(route)}
+                      index={index}
+                    />
+                  ))}
+              </div>
             </div>
+
+            {/* Alternatives section if any */}
+            {routes.filter(r => r.badge === "ALTERNATIVE" || r.badge === "MODERATE").length > 0 && (
+              <div className="mt-8">
+                <h3 className="text-xs font-bold text-cyber-light uppercase tracking-widest mb-4 px-1">Alternative Options</h3>
+                <div className="space-y-4">
+                  {routes.filter(r => r.badge === "ALTERNATIVE" || r.badge === "MODERATE").map((route, index) => (
+                    <RouteCard
+                      key={route.routeId}
+                      route={route}
+                      isSelected={selectedRoute?.routeId === route.routeId}
+                      onClick={() => setSelectedRoute(route)}
+                      index={index}
+                    />
+                  ))}
+                </div>
+              </div>
+            )}
 
             {selectedRoute && (
               <motion.div
@@ -165,7 +206,7 @@ const MapPage = () => {
                 <div className="glass rounded-xl p-4 mb-4">
                   <h3 className="font-semibold mb-2">Safety Analysis</h3>
                   <p className="text-sm text-cyber-light mb-3">{selectedRoute.aiNarrative}</p>
-                  
+
                   {/* Street lights info */}
                   <div className="grid grid-cols-3 gap-2 text-xs mb-3">
                     <div className="bg-cyber-cyan/10 p-2 rounded text-center">
@@ -181,7 +222,7 @@ const MapPage = () => {
                       <div className="text-cyber-light">Traffic Signals</div>
                     </div>
                   </div>
-                  
+
                   {selectedRoute.riskFactors?.length > 0 && (
                     <div className="mt-3">
                       <span className="text-xs text-cyber-light uppercase tracking-wider">Risk Factors</span>

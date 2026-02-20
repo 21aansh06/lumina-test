@@ -46,7 +46,7 @@ export const searchPlaces = async (query) => {
   }
 };
 
-export const getOSRMRoute = async (coordinates) => {
+export const getOSRMRoute = async (coordinates, retries = 2) => {
   try {
     const coordsString = coordinates.map((c) => c.join(",")).join(";");
 
@@ -57,7 +57,7 @@ export const getOSRMRoute = async (coordinates) => {
           overview: "full",
           geometries: "geojson",
           steps: true,
-          alternatives: true
+          alternatives: 3
         },
         timeout: 15000
       }
@@ -69,47 +69,14 @@ export const getOSRMRoute = async (coordinates) => {
 
     let routes = response.data.routes;
 
-    // If only 1 route, we duplicate it with an offset for demo purposes if needed, 
-    // but better to just work with what OSRM gives us.
-    // The requirement says "up to 5 alternative routes".
-
     return routes.slice(0, 5).map((route, index) => {
-      const offsetMeters = index * 8; // 8m separation for each alternative
-      const path = [];
-
-      for (let i = 0; i < route.geometry.coordinates.length; i++) {
-        const [lng, lat] = route.geometry.coordinates[i];
-
-        if (i === 0) {
-          path.push([lat, lng]);
-          continue;
-        }
-
-        const [prevLng, prevLat] = route.geometry.coordinates[i - 1];
-
-        const dx = lng - prevLng;
-        const dy = lat - prevLat;
-        const length = Math.sqrt(dx * dx + dy * dy);
-
-        if (length === 0) {
-          path.push([lat, lng]);
-          continue;
-        }
-
-        // Perpendicular unit vector for visual separation of routes on map
-        const ux = -dy / length;
-        const uy = dx / length;
-
-        const offsetLng = lng + ux * (offsetMeters / 111320);
-        const offsetLat = lat + uy * (offsetMeters / 110540);
-
-        path.push([offsetLat, offsetLng]);
-      }
+      // Use raw coordinates for high data accuracy
+      const path = route.geometry.coordinates.map(([lng, lat]) => [lat, lng]);
 
       return {
-        routeId: `route-${String.fromCharCode(97 + index)}`,
+        routeId: `route-${index}`,
         distance: route.distance,
-        duration: route.duration,
+        duration: route.duration, // Seconds
         geometry: route.geometry,
         legs: route.legs,
         path
@@ -117,6 +84,11 @@ export const getOSRMRoute = async (coordinates) => {
     });
 
   } catch (error) {
+    if (retries > 0 && (error.response?.status === 429 || error.response?.status === 504 || error.code === 'ECONNABORTED')) {
+      console.warn(`[OSRM] Error ${error.response?.status || error.code}, retrying...`);
+      await new Promise(resolve => setTimeout(resolve, 2000));
+      return getOSRMRoute(coordinates, retries - 1);
+    }
     console.error("OSRM routing error:", error.message);
     throw error;
   }
@@ -449,9 +421,9 @@ export const calculateRouteSafetyMetrics = (
   }
 
   // Filter POIs for THIS specific route
-  const LIGHT_DIST = 8;
-  const SIGNAL_DIST = 8;
-  const SHOP_DIST = 40;
+  const LIGHT_DIST = 12;
+  const SIGNAL_DIST = 25;
+  const SHOP_DIST = 60;
 
   const routeLights = allStreetLights.filter(l => distanceToRouteM(l.lat, l.lng, routePath) <= LIGHT_DIST);
   const routeSignals = allTrafficSignals.filter(s => distanceToRouteM(s.lat, s.lng, routePath) <= SIGNAL_DIST);

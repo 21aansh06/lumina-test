@@ -252,14 +252,27 @@ app.get('/api/overpass', async (req, res) => {
       `;
     }
 
-    const response = await axios.post(
-      'https://overpass-api.de/api/interpreter',
-      `data=${encodeURIComponent(overpassQuery)}`,
-      {
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        timeout: 50000
+    const fetchOverpass = async (query, retries = 2) => {
+      try {
+        return await axios.post(
+          'https://overpass-api.de/api/interpreter',
+          `data=${encodeURIComponent(query)}`,
+          {
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+            timeout: 50000
+          }
+        );
+      } catch (error) {
+        if (retries > 0 && (error.response?.status === 429 || error.response?.status === 504 || error.code === 'ECONNABORTED')) {
+          console.log(`[Overpass] Retry remaining: ${retries}. Reason: ${error.message}`);
+          await new Promise(resolve => setTimeout(resolve, 2000));
+          return fetchOverpass(query, retries - 1);
+        }
+        throw error;
       }
-    );
+    };
+
+    const response = await fetchOverpass(overpassQuery);
 
     const elements = response.data.elements || [];
 
