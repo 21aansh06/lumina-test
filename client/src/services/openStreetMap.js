@@ -437,31 +437,33 @@ const isShopLikelyOpen = (tags, hour) => {
 
 export const calculateRouteSafetyMetrics = (
   routePath,
-  streetLights = [],
-  trafficSignals = [],
-  shops = []
+  allStreetLights = [],
+  allTrafficSignals = [],
+  allShops = []
 ) => {
   if (!routePath || routePath.length === 0) {
     return {
-      lightingScore: 50,
-      crowdScore: 50,
-      openShops: 50,
-      streetLightsCount: 0,
-      trafficSignalsCount: 0,
-      shopsCount: 0,
-      routeLength: 0
+      lightingScore: 50, crowdScore: 50, openShops: 50,
+      streetLightsCount: 0, trafficSignalsCount: 0, shopsCount: 0, routeLength: 0
     };
   }
 
-  const hour = new Date().getHours(); // real local hour
+  // Filter POIs for THIS specific route
+  const LIGHT_DIST = 8;
+  const SIGNAL_DIST = 8;
+  const SHOP_DIST = 40;
+
+  const routeLights = allStreetLights.filter(l => distanceToRouteM(l.lat, l.lng, routePath) <= LIGHT_DIST);
+  const routeSignals = allTrafficSignals.filter(s => distanceToRouteM(s.lat, s.lng, routePath) <= SIGNAL_DIST);
+  const routeShops = allShops.filter(s => distanceToRouteM(s.lat, s.lng, routePath) <= SHOP_DIST);
+
+  const hour = new Date().getHours();
   const timeFactor = getTimeOfDayFactor(hour);
 
   const routeLengthKm = calculateRouteLengthKm(routePath);
-  const lightsCount = streetLights.length;
-  const signalsCount = trafficSignals.length;
-
-  // Only count shops that are actually open right now
-  const openShopsList = shops.filter(s => isShopLikelyOpen(s.tags, hour));
+  const lightsCount = routeLights.length;
+  const signalsCount = routeSignals.length;
+  const openShopsList = routeShops.filter(s => isShopLikelyOpen(s.tags, hour));
   const openShopsCount = openShopsList.length;
 
   const expectedLightsPerKm = 15;
@@ -472,17 +474,11 @@ export const calculateRouteSafetyMetrics = (
   const signalsRatio = routeLengthKm > 0 ? signalsCount / (routeLengthKm * expectedSignalsPerKm) : 0;
   const shopsRatio = routeLengthKm > 0 ? openShopsCount / (routeLengthKm * expectedShopsPerKm) : 0;
 
-  // Lighting is physical — unaffected by time of day (lights ARE on at night)
   const lightingScore = Math.min(100, Math.round(lightsRatio * 100));
-
-  // Crowd and shops are multiplied by the time-of-day factor
-  // e.g. at 1:30 AM timeFactor ≈ 0.04 → crowd score near 0 even on a busy road
-  const crowdScore = Math.min(100, Math.round(
-    (signalsRatio * 0.5 + shopsRatio * 0.5) * timeFactor * 100
-  ));
+  const crowdScore = Math.min(100, Math.round((signalsRatio * 0.5 + shopsRatio * 0.5) * timeFactor * 100));
   const openShops = Math.min(100, Math.round(shopsRatio * timeFactor * 100));
 
-  console.log(`[SafetyMetrics] Hour=${hour}, timeFactor=${timeFactor}, lights=${lightsCount}, signals=${signalsCount}, openShops=${openShopsCount}/${shops.length}`);
+  console.log(`[SafetyMetrics] Lights=${lightsCount}, Signals=${signalsCount}, OpenShops=${openShopsCount}`);
 
   return {
     lightingScore,
@@ -490,7 +486,7 @@ export const calculateRouteSafetyMetrics = (
     openShops,
     streetLightsCount: lightsCount,
     trafficSignalsCount: signalsCount,
-    shopsCount: openShopsCount,   // only open shops counted
+    shopsCount: openShopsCount,
     routeLength: routeLengthKm
   };
 };

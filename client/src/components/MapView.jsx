@@ -195,6 +195,10 @@ const MapView = ({
   }, [filteredSafetyData]);
 
   const getRouteColor = useCallback((route) => {
+    // 1. If the route already has a custom color assigned (e.g. Green for Safest, Red for Fastest)
+    if (route?.color) return route.color;
+
+    // 2. Fallback to safety score based coloring
     if (!route?.safetyScore) return "#3b82f6";
     if (route.safetyScore >= 80) return "#10b981";
     if (route.safetyScore >= 50) return "#f59e0b";

@@ -124,74 +124,10 @@ const DashboardPage = () => {
     const normalizedOrigin = normalizeLocation(routeData.origin);
     const normalizedDest = normalizeLocation(routeData.destination);
 
-    const mockMatch = Object.keys(mockRoutes).find(key => {
-      const [mockOrigin, mockDest] = key.split("-");
-      return (
-        normalizedOrigin.includes(mockOrigin) &&
-        normalizedDest.includes(mockDest)
-      );
-    });
-
-    // =========================
-    // ✅ MOCK ROUTE FOUND
-    // =========================
-    if (mockMatch) {
-      console.log("Using MOCK route");
-
-      const mockData = mockRoutes[mockMatch];
-
-      const enhancedRoutes = mockData.map((route, index) => {
-        let badge = "RISKY";
-        if (index === 0) badge = "SAFEST";
-        else if (index === 1) badge = "MODERATE";
-
-        return {
-          routeId: `route-${String.fromCharCode(97 + index)}`,
-          label: `Route ${String.fromCharCode(65 + index)}`,
-          badge,
-          color:
-            badge === "SAFEST"
-              ? "#10b981"
-              : badge === "MODERATE"
-                ? "#f59e0b"
-                : "#ef4444",
-          estimatedTime: `${route.duration} mins`,
-          estimatedMinutes: route.duration,
-          distance: route.distance,
-          safetyScore: route.safetyScore,
-          lightingScore: route.streetLights * 15,
-          crowdScore: route.trafficSignals * 20,
-          openShops: route.shops,
-          streetLightsCount: route.streetLights,
-          trafficSignalsCount: route.trafficSignals,
-          shopsCount: route.shops,
-          path: [],
-          geometry: null,
-          aiNarrative: `At 1:30 AM, this route has ${route.streetLights} street lights and ${route.shops} active shop areas.`,
-          recommended: badge === "SAFEST"
-        };
-      });
-
-      navigate("/map", {
-        state: {
-          routes: enhancedRoutes,
-          origin: { name: routeData.origin },
-          destination: { name: routeData.destination },
-          safetyData: {
-            streetLights: [],
-            trafficSignals: [],
-            shops: []
-          }
-        }
-      });
-
-      return;
-    }
-
     // =========================
     // 🌍 LIVE ROUTING (OSRM + OVERPASS)
     // =========================
-    console.log("Using LIVE routing");
+    console.log("Using LIVE routing...");
 
     setLoading(true);
 
@@ -241,8 +177,8 @@ const DashboardPage = () => {
 
         return {
           routeId: `route-${index}`,
-          originalDistance: route.distance, // distance in meters
-          originalDuration: route.duration, // duration in seconds
+          originalDistance: route.distance,
+          originalDuration: route.duration,
           distance: (route.distance / 1000).toFixed(1) + " km",
           estimatedTime: `${Math.round(route.duration / 60)} mins`,
           estimatedMinutes: Math.round(route.duration / 60),
@@ -255,10 +191,12 @@ const DashboardPage = () => {
           shopsCount: safetyMetrics.shopsCount,
           path: route.path,
           geometry: route.geometry,
-          aiNarrative: `This route has ${safetyMetrics.streetLightsCount} street lights and ${safetyMetrics.shopsCount} nearby shops. Lighting coverage is ${safetyMetrics.lightingScore > 70 ? 'excellent' : safetyMetrics.lightingScore > 50 ? 'moderate' : 'limited'}.`,
-          riskFactors: safetyMetrics.lightingScore < 50 ? ['Limited street lighting', 'Poor visibility'] :
-            safetyMetrics.lightingScore < 70 ? ['Moderate lighting', 'Some dark areas'] :
-              ['Well-lit areas', 'Good visibility'],
+          aiNarrative: `This specific path provides ${safetyMetrics.streetLightsCount} street lights and ${safetyMetrics.shopsCount} active locations. Lighting coverage is ${safetyMetrics.lightingScore}% effective for this precise segment.`,
+          riskFactors: safetyMetrics.lightingScore < 40
+            ? ['Poorly lit segment', 'High risk at night']
+            : safetyMetrics.lightingScore < 70
+              ? ['Moderate visibility', 'Use caution']
+              : ['Optimally lit', 'Safe for foot traffic'],
         };
       });
 
@@ -281,25 +219,53 @@ const DashboardPage = () => {
         return { ...route, combinedScore };
       });
 
-      // Step 4: Sort by combinedScore (highest first)
-      enhancedRoutes.sort((a, b) => b.combinedScore - a.combinedScore);
+      // Step 4: Identify Safest and Fastest
+      const safestCandidate = [...enhancedRoutes].sort((a, b) => b.combinedScore - a.combinedScore)[0];
+      const fastestCandidate = [...enhancedRoutes].sort((a, b) => a.originalDuration - b.originalDuration)[0];
 
-      // Step 5: Finalise labels and badges for the remaining sorted routes
-      enhancedRoutes = enhancedRoutes.map((route, index) => {
-        // The first route is the one we RECOMMEND (safest + reasonably fast)
-        const badge = index === 0 ? "SAFEST" : index === 1 ? "MODERATE" : "RISKY";
-        const color =
-          badge === "SAFEST" ? "#10b981" :
-            badge === "MODERATE" ? "#f59e0b" : "#ef4444";
+      // Step 5: Finalise labels, badges and colors for comparison
+      enhancedRoutes = enhancedRoutes.map((route) => {
+        const isSafest = route.routeId === safestCandidate?.routeId;
+        const isFastest = route.routeId === fastestCandidate?.routeId;
+
+        let badge = "ALTERNATIVE";
+        let color = "#94a3b8"; // Gray for alternatives
+        let labelSuffix = "";
+
+        if (isSafest && isFastest) {
+          badge = "SAFEST & FASTEST";
+          color = "#10b981"; // GREEN
+          labelSuffix = " (Optimal)";
+        } else if (isSafest) {
+          badge = "SAFEST";
+          color = "#10b981"; // GREEN
+          labelSuffix = " (Recommended)";
+        } else if (isFastest) {
+          badge = "FASTEST";
+          color = "#ef4444"; // RED
+          labelSuffix = " (Quickest)";
+        } else {
+          badge = "MODERATE";
+          color = "#f59e0b"; // Amber
+        }
 
         return {
           ...route,
-          routeId: `route-${String.fromCharCode(97 + index)}`,
-          label: `Route ${String.fromCharCode(65 + index)}${index === 0 ? ' (Recommended)' : ''}`,
+          routeId: `route-${route.routeId.split('-')[1]}`, // keep ID simple
+          label: `Route ${String.fromCharCode(65 + parseInt(route.routeId.split('-')[1]))}${labelSuffix}`,
           badge,
           color,
-          recommended: index === 0
+          recommended: isSafest
         };
+      });
+
+      // Sort so Safest comes first, then Fastest, then others
+      enhancedRoutes.sort((a, b) => {
+        if (a.badge.includes("SAFEST")) return -1;
+        if (b.badge.includes("SAFEST")) return 1;
+        if (a.badge === "FASTEST") return -1;
+        if (b.badge === "FASTEST") return 1;
+        return 0;
       });
 
       navigate("/map", {
