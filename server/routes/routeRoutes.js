@@ -1,14 +1,18 @@
 const express = require('express');
 const router = express.Router();
-const { GoogleGenerativeAI } = require('@google/generative-ai');
 const RoadSegment = require('../models/RoadSegment');
 const Incident = require('../models/Incident');
-const { calculateSafety } = require('../utils/calculateSafety');
+const { calculateSafety, calculateSafetyMetrics, getSafetyColor } = require('../utils/calculateSafety');
+const {
+  geocode,
+  getRoutesFromOSRM,
+  getAllPOIsForRoute,
+  filterPOIsOnRoute,
+  rankRoutes,
+  haversineDistanceM,
+  calculateRouteLengthKm
+} = require('../services/routeService');
 
-const genAI = new GoogleGenerativeAI(process.env.GOOGLE_GEMINI_API_KEY);
-const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
-
-// Get all road segments
 router.get('/roads', async (req, res) => {
   try {
     const roads = await RoadSegment.find();
@@ -18,8 +22,9 @@ router.get('/roads', async (req, res) => {
   }
 });
 
-// Calculate 3 route options
 router.post('/calculate', async (req, res) => {
+  const startTime = Date.now();
+
   try {
     const { origin, destination } = req.body;
 
@@ -27,114 +32,100 @@ router.post('/calculate', async (req, res) => {
       return res.status(400).json({ error: 'Origin and destination required' });
     }
 
-    let routeData;
-    let usingAI = false;
+    console.log(`🚀 Calculating routes from "${origin}" to "${destination}"`);
 
-    // Check if Gemini API key is configured and not a demo key
-    const geminiKey = process.env.GOOGLE_GEMINI_API_KEY;
-    const isValidKey = geminiKey && !geminiKey.includes('demo') && geminiKey.length > 20;
+    const originCoords = await geocode(origin);
+    const destCoords = await geocode(destination);
 
-    if (isValidKey) {
-      try {
-        // Send to Gemini for route analysis
-        const prompt = `Analyze 3 possible route variations from "${origin}" to "${destination}" in an urban environment.
+    console.log(`📍 Origin: ${originCoords.lat}, ${originCoords.lng}`);
+    console.log(`📍 Destination: ${destCoords.lat}, ${destCoords.lng}`);
 
-For each route, evaluate:
-- Street lighting quality (0-100)
-- Crowd density (0-100) 
-- Open commercial presence (0-100)
-- Potential incident risks (0-100)
-- Estimated time in minutes
-- Risk factors (array of strings)
+    let routes = await getRoutesFromOSRM(originCoords, destCoords);
 
-Return ONLY this JSON format:
-{
-  "routes": [
-    {
-      "routeId": "route-a",
-      "label": "Route A",
-      "estimatedTime": "25 mins",
-      "estimatedMinutes": 25,
-      "lightingScore": 85,
-      "crowdScore": 70,
-      "openShops": 80,
-      "riskFactors": ["Low traffic at night", "Well lit"],
-      "aiNarrative": "This route passes through well-lit commercial areas...",
-      "path": [[lng, lat], [lng, lat], [lng, lat]]
-    },
-    {
-      "routeId": "route-b",
-      "label": "Route B",
-      "estimatedTime": "20 mins",
-      "estimatedMinutes": 20,
-      "lightingScore": 60,
-      "crowdScore": 65,
-      "openShops": 55,
-      "riskFactors": ["Moderate lighting", "Average foot traffic"],
-      "aiNarrative": "Balanced route with moderate safety...",
-      "path": [[lng, lat], [lng, lat], [lng, lat]]
-    },
-    {
-      "routeId": "route-c",
-      "label": "Route C",
-      "estimatedTime": "15 mins",
-      "estimatedMinutes": 15,
-      "lightingScore": 40,
-      "crowdScore": 35,
-      "openShops": 30,
-      "riskFactors": ["Poor lighting", "Low foot traffic", "Shortcut through industrial area"],
-      "aiNarrative": "Fastest but riskiest route...",
-      "path": [[lng, lat], [lng, lat], [lng, lat]]
-    }
-  ]
-}
-
-Respond with ONLY valid JSON, no markdown formatting.
-Use realistic coordinates that would be between origin and destination.`;
-
-        console.log('Calculating routes with Gemini AI...');
-        const result = await model.generateContent(prompt);
-        const response = result.response.text();
-
-        // Parse response
-        try {
-          const jsonMatch = response.match(/\{[\s\S]*\}/);
-          if (jsonMatch) {
-            routeData = JSON.parse(jsonMatch[0]);
-          } else {
-            routeData = JSON.parse(response);
-          }
-          usingAI = true;
-          console.log('✅ AI route calculation successful');
-        } catch (parseError) {
-          console.error('Failed to parse Gemini response:', parseError);
-          routeData = getMockRoutes(origin, destination);
-        }
-      } catch (aiError) {
-        console.error('❌ Gemini API error:', aiError.message);
-        console.log('⚠️  Falling back to mock routes');
-        routeData = getMockRoutes(origin, destination);
-      }
-    } else {
-      console.log('⚠️  No valid Gemini API key found. Using mock routes.');
-      routeData = getMockRoutes(origin, destination);
+    if (!routes || routes.length === 0) {
+      return res.status(500).json({ error: 'Failed to calculate routes' });
     }
 
-    // Enhance with live incident data
-    const enhancedRoutes = await enhanceRoutesWithIncidents(routeData.routes);
+    console.log(`✅ Got ${routes.length} routes from OSRM`);
 
-    // Sort by safety score and assign badges
-    enhancedRoutes.sort((a, b) => b.safetyScore - a.safetyScore);
-    enhancedRoutes[0].badge = 'SAFEST';
-    enhancedRoutes[0].recommended = true;
-    
-    if (enhancedRoutes[1]) enhancedRoutes[1].badge = 'MODERATE';
-    if (enhancedRoutes[2]) enhancedRoutes[2].badge = 'RISKY';
+    routes = rankRoutes(routes);
 
-    res.json({ 
+    for (const route of routes) {
+      const routeLengthKm = calculateRouteLengthKm(route.coordinates);
+      console.log(`📡 Fetching POIs for route ${route.id} (${routeLengthKm.toFixed(2)}km)...`);
+
+      const pois = await getAllPOIsForRoute(route.coordinates, 60);
+
+      const filteredPois = filterPOIsOnRoute(pois, route.coordinates);
+
+      route.street_lights = filteredPois.streetLights.length;
+      route.traffic_signals = filteredPois.trafficSignals.length;
+      route.shops = filteredPois.shops.length;
+      route.routeLengthKm = routeLengthKm;
+
+      console.log(`   Route ${route.id}: ${route.street_lights} lights (≤5m), ${route.traffic_signals} signals (≤20m), ${route.shops} shops (≤50m)`);
+    }
+
+    const activeIncidents = await Incident.find({
+      status: 'active',
+      expiresAt: { $gt: new Date() }
+    });
+
+    const enhancedRoutes = routes.map(route => {
+      const incidentImpact = calculateIncidentImpact(route.coordinates, activeIncidents);
+
+      const metrics = calculateSafetyMetrics(
+        {
+          streetLights: Array(route.street_lights).fill({}),
+          trafficSignals: Array(route.traffic_signals).fill({}),
+          shops: Array(route.shops).fill({})
+        },
+        route.routeLengthKm
+      );
+
+      const safetyScore = calculateSafety({
+        lightingScore: metrics.lightingScore,
+        crowdScore: metrics.crowdScore,
+        openShops: metrics.openShops,
+        incidentImpact
+      });
+
+      return {
+        id: route.id,
+        routeId: route.routeId || `route-${route.id}`,
+        label: route.label,
+        badge: route.badge,
+        distance_km: Math.round(route.distance_km * 10) / 10,
+        duration_min: route.duration_min,
+        estimatedTime: `${route.duration_min} mins`,
+        eta_difference: route.eta_difference,
+        eta_difference_min: route.eta_difference_min,
+        street_lights: route.street_lights,
+        traffic_signals: route.traffic_signals,
+        shops: route.shops,
+        lightingScore: metrics.lightingScore,
+        crowdScore: metrics.crowdScore,
+        openShops: metrics.openShops,
+        safetyScore,
+        incidentImpact,
+        riskFactors: getRiskFactors(metrics.lightingScore, metrics.crowdScore, metrics.openShops, incidentImpact),
+        aiNarrative: generateNarrative(route, metrics.lightingScore, metrics.crowdScore, incidentImpact),
+        path: route.coordinates,
+        polyline: route.geometry,
+        color: getSafetyColor(safetyScore),
+        recommended: route.badge === 'FASTEST'
+      };
+    });
+
+    const processingTime = Date.now() - startTime;
+    console.log(`⏱️ Total processing time: ${processingTime}ms`);
+
+    res.json({
       routes: enhancedRoutes,
-      aiPowered: usingAI,
-      message: usingAI ? 'Routes calculated with AI' : 'Routes calculated with demo data (AI API not configured)'
+      origin: { ...originCoords, address: origin },
+      destination: { ...destCoords, address: destination },
+      source: 'OSRM',
+      processingTime
     });
 
   } catch (error) {
@@ -143,113 +134,65 @@ Use realistic coordinates that would be between origin and destination.`;
   }
 });
 
-// Enhance routes with real-time incident data
-async function enhanceRoutesWithIncidents(routes) {
-  const activeIncidents = await Incident.find({
-    status: 'active',
-    expiresAt: { $gt: new Date() }
-  });
+function calculateIncidentImpact(coordinates, incidents) {
+  if (!coordinates?.length || !incidents?.length) return 0;
 
-  return routes.map(route => {
-    // Calculate base safety score
-    let safetyScore = calculateSafety({
-      lightingScore: route.lightingScore,
-      crowdScore: route.crowdScore,
-      openShops: route.openShops,
-      incidentImpact: 0
-    });
+  const midIdx = Math.floor(coordinates.length / 2);
+  const midPoint = coordinates[midIdx];
 
-    // Check for incidents near route path
-    let incidentImpact = 0;
-    if (route.path && route.path.length > 0) {
-      // Calculate center point of route
-      const centerIdx = Math.floor(route.path.length / 2);
-      const center = route.path[centerIdx];
-      
-      // Find incidents near route center
-      const nearbyIncidents = activeIncidents.filter(incident => {
-        const dist = calculateDistance(
-          center[1], center[0],
-          incident.location.coordinates[1], incident.location.coordinates[0]
-        );
-        return dist < 1000; // Within 1km
-      });
+  const nearbyCount = incidents.filter(incident => {
+    const dist = haversineDistanceM(
+      midPoint[0], midPoint[1],
+      incident.location.coordinates[1],
+      incident.location.coordinates[0]
+    );
+    return dist < 500;
+  }).length;
 
-      incidentImpact = nearbyIncidents.reduce((sum, inc) => sum + inc.severity * 3, 0);
-      incidentImpact = Math.min(100, incidentImpact);
-    }
-
-    // Recalculate with incident impact
-    safetyScore = calculateSafety({
-      lightingScore: route.lightingScore,
-      crowdScore: route.crowdScore,
-      openShops: route.openShops,
-      incidentImpact
-    });
-
-    return {
-      ...route,
-      safetyScore,
-      incidentImpact,
-      color: safetyScore >= 80 ? '#10b981' : safetyScore >= 50 ? '#f59e0b' : '#ef4444'
-    };
-  });
+  return Math.min(100, nearbyCount * 15);
 }
 
-function calculateDistance(lat1, lon1, lat2, lon2) {
-  const R = 6371e3;
-  const φ1 = lat1 * Math.PI / 180;
-  const φ2 = lat2 * Math.PI / 180;
-  const Δφ = (lat2 - lat1) * Math.PI / 180;
-  const Δλ = (lon2 - lon1) * Math.PI / 180;
-  const a = Math.sin(Δφ/2) * Math.sin(Δφ/2) +
-            Math.cos(φ1) * Math.cos(φ2) *
-            Math.sin(Δλ/2) * Math.sin(Δλ/2);
-  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
-  return R * c;
+function getRiskFactors(lightingScore, crowdScore, openShops, incidentImpact) {
+  const factors = [];
+
+  if (lightingScore >= 70) factors.push('Well-lit streets');
+  else if (lightingScore >= 40) factors.push('Moderate lighting');
+  else factors.push('Poor street lighting');
+
+  if (crowdScore >= 60) factors.push('High foot traffic area');
+  else if (crowdScore >= 40) factors.push('Moderate foot traffic');
+  else factors.push('Low foot traffic');
+
+  if (openShops >= 50) factors.push('Commercial area');
+
+  if (incidentImpact > 30) factors.push('Recent incidents reported nearby');
+
+  return factors;
 }
 
-function getMockRoutes(origin, destination) {
-  return {
-    routes: [
-      {
-        routeId: 'route-a',
-        label: 'Route A - Safest',
-        estimatedTime: '28 mins',
-        estimatedMinutes: 28,
-        lightingScore: 88,
-        crowdScore: 82,
-        openShops: 85,
-        riskFactors: ['Well-lit areas', 'High foot traffic', 'Commercial zones'],
-        aiNarrative: 'This route passes through well-lit commercial areas with high foot traffic, making it the safest option.',
-        path: [[-74.006, 40.7128], [-73.99, 40.73], [-73.985, 40.748]]
-      },
-      {
-        routeId: 'route-b',
-        label: 'Route B - Moderate',
-        estimatedTime: '22 mins',
-        estimatedMinutes: 22,
-        lightingScore: 65,
-        crowdScore: 60,
-        openShops: 55,
-        riskFactors: ['Moderate lighting', 'Average foot traffic', 'Mixed residential'],
-        aiNarrative: 'A balanced route with moderate safety and reasonable travel time.',
-        path: [[-74.006, 40.7128], [-74.0, 40.725], [-73.985, 40.748]]
-      },
-      {
-        routeId: 'route-c',
-        label: 'Route C - Fastest',
-        estimatedTime: '18 mins',
-        estimatedMinutes: 18,
-        lightingScore: 45,
-        crowdScore: 40,
-        openShops: 35,
-        riskFactors: ['Poor lighting', 'Low foot traffic', 'Industrial area', 'Shortcut'],
-        aiNarrative: 'Fastest route but passes through less safe areas with poor lighting and low visibility.',
-        path: [[-74.006, 40.7128], [-74.02, 40.72], [-73.985, 40.748]]
-      }
-    ]
-  };
+function generateNarrative(route, lightingScore, crowdScore, incidentImpact) {
+  const speedKmh = route.distance_km > 0 ? (route.distance_km / (route.duration_min / 60)).toFixed(0) : 0;
+
+  let narrative = `${route.label} covering ${route.distance_km.toFixed(1)}km with ${route.street_lights} street lights. `;
+  narrative += `Estimated travel time ${route.duration_min} minutes (~${speedKmh} km/h avg). `;
+
+  if (lightingScore >= 70) {
+    narrative += 'Good visibility throughout the route. ';
+  } else if (lightingScore >= 40) {
+    narrative += 'Moderate lighting, exercise caution in darker sections. ';
+  } else {
+    narrative += 'Limited street lighting, extra caution advised. ';
+  }
+
+  if (crowdScore >= 60) {
+    narrative += 'High foot traffic area for better safety.';
+  } else if (crowdScore >= 40) {
+    narrative += 'Moderate pedestrian activity.';
+  } else {
+    narrative += 'Low foot traffic area.';
+  }
+
+  return narrative;
 }
 
 module.exports = router;
